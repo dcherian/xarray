@@ -163,19 +163,26 @@ def plot(
         Additional keyword arguments to matplotlib
 
     """
-    darray = darray.squeeze().compute()
+    from ..core.groupby import GroupBy
+
+    if isinstance(darray, GroupBy):
+        if row is None and col is None:
+            raise ValueError(
+                f"Both 'row' and 'col' are None. Expected one of 'row' or 'col' to be '{darray._unique_coord.name}'"
+            )
 
     plot_dims = set(darray.dims)
     plot_dims.discard(row)
     plot_dims.discard(col)
     plot_dims.discard(hue)
 
-    ndims = len(plot_dims)
+    # if we are grouping over a 1D uniquely valued coordinate, then plotting should work.
+    if isinstance(darray, GroupBy) and darray._unique_coord.equals(
+        darray._obj.coords[darray._group_dim]
+    ):
+        plot_dims.discard(darray._group_dim)
 
-    error_msg = (
-        "Only 1d and 2d plots are supported for facets in xarray. "
-        "See the package `Seaborn` for more options."
-    )
+    ndims = len(plot_dims)
 
     if ndims in [1, 2]:
         if row or col:
@@ -194,12 +201,26 @@ def plot(
                 plotfunc = pcolormesh
     else:
         if row or col or hue:
-            raise ValueError(error_msg)
+            raise ValueError(
+                f"Only 1d and 2d plots are supported for facets in xarray. "
+                f"Provided DataArray has {ndims} dimension(s). "
+                f"See the package `Seaborn` for more options."
+            )
         plotfunc = hist
 
     kwargs["ax"] = ax
 
     return plotfunc(darray, **kwargs)
+
+
+def _sanity_check_groupby_row_col(grouped, row, col):
+    grouped_name = grouped._unique_coord.name
+    row_or_col = row if row is not None else col
+    if row_or_col != grouped_name:
+        raise ValueError(
+            "Expected grouped variable %r for 'row' or 'col', received %r instead."
+            % (grouped_name, row_or_col)
+        )
 
 
 # This function signature should not change so that it can use
@@ -272,12 +293,27 @@ def line(
     ``*args``, ``**kwargs`` : optional
         Additional arguments to matplotlib.pyplot.plot
     """
+
+    from ..core.groupby import GroupBy
+
+    if isinstance(darray, GroupBy):
+        if row is None and col is None:
+            raise ValueError(
+                f"Both 'row' and 'col' are None. Expected one of 'row' or 'col' to be '{darray._unique_coord.name}'"
+            )
+
     # Handle facetgrids first
     if row or col:
         allargs = locals().copy()
         allargs.update(allargs.pop("kwargs"))
-        allargs.pop("darray")
-        return _easy_facetgrid(darray, line, kind="line", **allargs)
+        del allargs["darray"]
+        del allargs["GroupBy"]
+
+        if not isinstance(darray, GroupBy):
+            return _easy_facetgrid(darray, line, kind="line", **allargs)
+        else:
+            _sanity_check_groupby_row_col(darray, row, col)
+            return _easy_facetgrid(darray, line, kind="groupby_line", **allargs)
 
     ndims = len(darray.dims)
     if ndims > 2:
@@ -295,6 +331,9 @@ def line(
 
     ax = get_axis(figsize, size, aspect, ax)
     xplt, yplt, hueplt, xlabel, ylabel, hue_label = _infer_line_data(darray, x, y, hue)
+
+    if not isinstance(darray, GroupBy):
+        darray = darray.squeeze().compute()
 
     # Remove pd.Intervals if contained in xplt.values.
     if _valid_other_type(xplt.values, [pd.Interval]):
@@ -649,7 +688,13 @@ def _plot2d(plotfunc):
             allargs.update(allargs.pop("kwargs"))
             # Need the decorated plotting function
             allargs["plotfunc"] = globals()[plotfunc.__name__]
-            return _easy_facetgrid(darray, kind="dataarray", **allargs)
+            from ..core.groupby import GroupBy
+
+            if not isinstance(darray, GroupBy):
+                return _easy_facetgrid(darray, kind="dataarray", **allargs)
+            else:
+                _sanity_check_groupby_row_col(darray, row, col)
+                return _easy_facetgrid(darray, kind="groupby", **allargs)
 
         plt = import_matplotlib_pyplot()
 
@@ -662,9 +707,13 @@ def _plot2d(plotfunc):
                 "with a three-dimensional array (per facet)"
             )
 
+        darray = darray.squeeze()
+
         xlab, ylab = _infer_xy_labels(
             darray=darray, x=x, y=y, imshow=imshow_rgb, rgb=rgb
         )
+
+        darray = darray.compute()
 
         # better to pass the ndarrays directly to plotting functions
         xval = darray[xlab].values

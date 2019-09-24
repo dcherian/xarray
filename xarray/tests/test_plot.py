@@ -36,6 +36,11 @@ try:
 except ImportError:
     pass
 
+try:
+    import cftime
+except ImportError:
+    pass
+
 
 @pytest.mark.flaky
 @pytest.mark.skip(reason="maybe flaky")
@@ -2199,3 +2204,61 @@ def test_plot_transposes_properly(plotfunc):
     # pcolormesh returns 1D array but imshow returns a 2D array so it is necessary
     # to ravel() on the LHS
     assert np.all(hdl.get_array().ravel() == da.to_masked_array().ravel())
+
+
+class TestDataArrayGroupByPlot:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.ds = Dataset(
+            {
+                "variable": (
+                    ("lat", "lon", "time"),
+                    np.arange(60.0).reshape((4, 3, 5)),
+                ),
+                "id": (("lat", "lon"), np.arange(12.0).reshape((4, 3))),
+            },
+            coords={
+                "lat": np.arange(4),
+                "lon": np.arange(3),
+                "time": pd.date_range(start="2001-01-01", freq="D", periods=5),
+            },
+        )
+
+    @requires_cftime
+    @requires_nc_time_axis
+    @pytest.mark.parametrize(
+        "time",
+        [
+            cftime.num2date(
+                np.arange(0, 730), "days since 0001-01-01 00:00:00", calendar="noleap"
+            ),
+            pd.date_range("2001-01-01", freq="12H", periods=730),
+        ],
+    )
+    def test_time_grouping(self, time):
+        # create spatial coordinate
+        lev = np.arange(100)
+
+        # Create sample Dataset
+        ds = Dataset(
+            {
+                "sample_data": (["time", "lev"], np.random.rand(time.size, lev.size)),
+                "independent_data": (["lev"], np.random.rand(lev.size)),
+            },
+            coords={"time": (["time"], time), "lev": (["lev"], lev)},
+        )
+
+        ds.sample_data.groupby("time.month").plot(
+            col="month", col_wrap=4, x="time", sharey=True
+        )
+
+    def test_stacked_groupby_line_plot(self):
+        self.ds.variable.groupby(self.ds.id).plot.line(col="id", col_wrap=2)
+
+    def test_stacked_groupby_2d_plot(self):
+        id2 = self.ds.id.isel(lon=0)
+        self.ds.variable.groupby(id2).plot(col="id", col_wrap=2)
+
+    def test_groupby_plot_errors(self):
+        with raises_regex(ValueError, "Expected one of 'row' or 'col' to be 'id'"):
+            self.ds.variable.groupby(self.ds.id).plot.line()

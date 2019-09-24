@@ -4,6 +4,7 @@ import warnings
 
 import numpy as np
 
+
 from ..core.formatting import format_item
 from .utils import (
     _infer_xy_labels,
@@ -30,6 +31,24 @@ def _nicetitle(coord, value, maxchar, template):
         title = title[: (maxchar - 3)] + "..."
 
     return title
+
+
+def parse_sharex_sharey(data, sharex, sharey):
+
+    from ..core.groupby import GroupBy
+
+    if sharex is None:
+        if isinstance(data, GroupBy):
+            sharex = False
+        else:
+            sharex = True
+    if sharey is None:
+        if isinstance(data, GroupBy):
+            sharey = False
+        else:
+            sharey = True
+
+    return sharex, sharey
 
 
 class FacetGrid:
@@ -79,8 +98,8 @@ class FacetGrid:
         col=None,
         row=None,
         col_wrap=None,
-        sharex=True,
-        sharey=True,
+        sharex=None,
+        sharey=None,
         figsize=None,
         aspect=1,
         size=3,
@@ -161,6 +180,7 @@ class FacetGrid:
             cbar_space = 1
             figsize = (ncol * size * aspect + cbar_space, nrow * size)
 
+        sharex, sharey = parse_sharex_sharey(data, sharex, sharey)
         fig, axes = plt.subplots(
             nrow,
             ncol,
@@ -360,6 +380,87 @@ class FacetGrid:
                 self.add_legend()
             elif meta_data["add_colorbar"]:
                 self.add_colorbar(label=self._hue_label, **cbar_kwargs)
+
+        return self
+
+    def map_groupby(
+        self, func, x=None, y=None, hue=None, hue_style=None, add_guide=None, **kwargs
+    ):
+
+        if kwargs.get("cbar_ax", None) is not None:
+            raise ValueError("cbar_ax not supported by FacetGrid.")
+
+        cmap_params, cbar_kwargs = _process_cmap_cbar_kwargs(
+            func, self.data._obj.values, **kwargs
+        )
+
+        self._cmap_extend = cmap_params.get("extend")
+
+        # Order is important
+        func_kwargs = {
+            k: v
+            for k, v in kwargs.items()
+            if k not in {"cmap", "colors", "cbar_kwargs", "levels"}
+        }
+        func_kwargs.update(cmap_params)
+        func_kwargs.update({"add_colorbar": False, "add_labels": False})
+
+        # Get x, y labels for the first subplot
+        grouped = self.data
+        first_group = grouped._obj.isel(
+            **{grouped._group_dim: grouped._group_indices[0]}
+        ).squeeze()
+        x, y = _infer_xy_labels(
+            darray=first_group,
+            x=x,
+            y=y,
+            imshow=func.__name__ == "imshow",
+            rgb=kwargs.get("rgb", None),
+        )
+
+        for (_, subset), ax in zip(self.data, self.axes.flat):
+            mappable = func(subset, x=x, y=y, ax=ax, **func_kwargs)
+            self._mappables.append(mappable)
+
+        self._finalize_grid(x, y)
+
+        if kwargs.get("add_colorbar", True):
+            self.add_colorbar(**cbar_kwargs)
+
+        return self
+
+    def map_groupby_line(
+        self, func, x, y, hue, add_legend=True, _labels=None, **kwargs
+    ):
+        from .plot import _infer_line_data
+
+        grouped = self.data
+        first_group = grouped._obj.isel(
+            **{grouped._group_dim: grouped._group_indices[0]}
+        ).squeeze()
+        _, _, hueplt, xlabel, ylabel, huelabel = _infer_line_data(
+            darray=first_group, x=x, y=y, hue=hue
+        )
+
+        for (_, subset), ax in zip(self.data, self.axes.flat):
+            mappable = func(
+                subset.squeeze(),
+                x=x,
+                y=y,
+                ax=ax,
+                hue=hue,
+                add_legend=False,
+                _labels=False,
+                **kwargs
+            )
+            self._mappables.append(mappable)
+
+        self._hue_var = hueplt
+        self._hue_label = huelabel
+        self._finalize_grid(xlabel, ylabel)
+
+        if add_legend and hueplt is not None and huelabel is not None:
+            self.add_legend()
 
         return self
 
@@ -599,8 +700,8 @@ def _easy_facetgrid(
     row=None,
     col=None,
     col_wrap=None,
-    sharex=True,
-    sharey=True,
+    sharex=None,
+    sharey=None,
     aspect=None,
     size=None,
     subplot_kws=None,
@@ -643,3 +744,9 @@ def _easy_facetgrid(
 
     if kind == "dataset":
         return g.map_dataset(plotfunc, x, y, **kwargs)
+
+    if kind == "groupby":
+        return g.map_groupby(plotfunc, x, y, **kwargs)
+
+    if kind == "groupby_line":
+        return g.map_groupby_line(plotfunc, x, y, **kwargs)

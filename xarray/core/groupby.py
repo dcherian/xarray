@@ -23,6 +23,8 @@ from .utils import (
 )
 from .variable import IndexVariable, Variable, as_variable
 
+from ..plot.plot import _PlotMethods as _DataArray_PlotMethods
+
 
 def check_reduce_dims(reduce_dims, dimensions):
 
@@ -263,6 +265,7 @@ class GroupBy(SupportsArithmetic):
         "_stacked_dim",
         "_unique_coord",
         "_dims",
+        "_coords",
     )
 
     def __init__(
@@ -404,6 +407,7 @@ class GroupBy(SupportsArithmetic):
         self._obj = obj
         self._group = group
         self._group_dim = group_dim
+        self._group_coord = obj[group_dim]
         self._group_indices = group_indices
         self._unique_coord = unique_coord
         self._stacked_dim = stacked_dim
@@ -411,9 +415,30 @@ class GroupBy(SupportsArithmetic):
         self._full_index = full_index
         self._restore_coord_dims = restore_coord_dims
 
+        # make groupby object mimic underlying object
+        self.attrs = obj.attrs
+        self.name = obj.name if hasattr(obj, "name") else None
+
         # cached attributes
         self._groups = None
         self._dims = None
+        self._coords = None
+
+    @property
+    def coords(self):
+        # TODO: implement drop_vars for Coordinates?
+        if self._coords is None:
+            self._coords = (
+                self._obj.isel(**{self._group_dim: self._group_indices[0]})
+                .coords.to_dataset()
+                .drop_vars([self._group.name, self._group_dim], errors="ignore")
+                .coords
+            )
+        return self._coords
+
+    @property
+    def ndim(self):
+        return len(self.dims)
 
     @property
     def dims(self):
@@ -444,6 +469,23 @@ class GroupBy(SupportsArithmetic):
             self._unique_coord.size,
             ", ".join(format_array_flat(self._unique_coord, 30).split()),
         )
+
+    def __getitem__(self, key):
+        # TODO: this may need to be better
+        if (
+            key != self._unique_coord.name
+            and key not in self.coords
+            and key not in self.dims
+        ):
+            raise ValueError(
+                f"Expected one of dimension {self._group_dim}, dimensions {self._obj.dims} "
+                f"or coordinates {self.coords._coord_names}. Received {key}."
+            )
+
+        if key == self._unique_coord.name:
+            return self._unique_coord
+        else:
+            return self._obj[key]
 
     def _get_index_and_items(self, index, grouper):
         from .resample_cftime import CFTimeGrouper
@@ -886,6 +928,10 @@ class DataArrayGroupBy(GroupBy, ImplementsArrayReduce):
         check_reduce_dims(dim, self.dims)
 
         return self.map(reduce_array, shortcut=shortcut)
+
+    @property
+    def plot(self):
+        return _DataArray_PlotMethods(self)
 
 
 ops.inject_reduce_methods(DataArrayGroupBy)
