@@ -36,11 +36,6 @@ try:
 except ImportError:
     pass
 
-try:
-    import cftime
-except ImportError:
-    pass
-
 
 @pytest.mark.flaky
 @pytest.mark.skip(reason="maybe flaky")
@@ -2206,6 +2201,7 @@ def test_plot_transposes_properly(plotfunc):
     assert np.all(hdl.get_array().ravel() == da.to_masked_array().ravel())
 
 
+@requires_matplotlib
 class TestDataArrayGroupByPlot:
     @pytest.fixture(autouse=True)
     def setup(self):
@@ -2229,8 +2225,8 @@ class TestDataArrayGroupByPlot:
     @pytest.mark.parametrize(
         "time",
         [
-            cftime.num2date(
-                np.arange(0, 730), "days since 0001-01-01 00:00:00", calendar="noleap"
+            xr.cftime_range(
+                start="0001-01-01", periods=730, freq="D", calendar="noleap"
             ),
             pd.date_range("2001-01-01", freq="12H", periods=730),
         ],
