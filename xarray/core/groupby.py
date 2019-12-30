@@ -407,7 +407,6 @@ class GroupBy(SupportsArithmetic):
         self._obj = obj
         self._group = group
         self._group_dim = group_dim
-        self._group_coord = obj[group_dim]
         self._group_indices = group_indices
         self._unique_coord = unique_coord
         self._stacked_dim = stacked_dim

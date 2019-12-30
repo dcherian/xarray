@@ -4,7 +4,6 @@ import warnings
 
 import numpy as np
 
-
 from ..core.formatting import format_item
 from .utils import (
     _infer_xy_labels,
