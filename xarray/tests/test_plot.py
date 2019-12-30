@@ -2216,36 +2216,22 @@ class TestDataArrayGroupByPlot:
             coords={
                 "lat": np.arange(4),
                 "lon": np.arange(3),
-                "time": pd.date_range(start="2001-01-01", freq="D", periods=5),
+                "time": pd.date_range(start="2001-01-01", freq="12H", periods=5),
             },
         )
 
     @requires_cftime
     @requires_nc_time_axis
-    @pytest.mark.parametrize(
-        "time",
-        [
-            xr.cftime_range(
-                start="0001-01-01", periods=730, freq="D", calendar="noleap"
-            ),
-            pd.date_range("2001-01-01", freq="12H", periods=730),
-        ],
-    )
-    def test_time_grouping(self, time):
-        # create spatial coordinate
-        lev = np.arange(100)
-
-        # Create sample Dataset
-        ds = Dataset(
-            {
-                "sample_data": (["time", "lev"], np.random.rand(time.size, lev.size)),
-                "independent_data": (["lev"], np.random.rand(lev.size)),
-            },
-            coords={"time": (["time"], time), "lev": (["lev"], lev)},
+    def test_cftime_grouping(self):
+        ds = self.ds.copy()
+        ds["time"] = xr.cftime_range(
+            start="0001-01-01", periods=5, freq="12H", calendar="noleap"
         )
+        ds.variable.sel(lat=0).groupby("time.day").plot(col="day", x="lon", sharey=True)
 
-        ds.sample_data.groupby("time.month").plot(
-            col="month", col_wrap=4, x="time", sharey=True
+    def test_time_grouping(self):
+        self.ds.variable.sel(lat=0).groupby("time.day").plot(
+            col="day", x="lon", sharey=True
         )
 
     def test_stacked_groupby_line_plot(self):

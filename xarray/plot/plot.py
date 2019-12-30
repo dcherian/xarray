@@ -177,9 +177,7 @@ def plot(
     plot_dims.discard(hue)
 
     # if we are grouping over a 1D uniquely valued coordinate, then plotting should work.
-    if isinstance(darray, GroupBy) and darray._unique_coord.equals(
-        darray._obj.coords[darray._group_dim]
-    ):
+    if isinstance(darray, GroupBy):
         plot_dims.discard(darray._group_dim)
 
     ndims = len(plot_dims)
