@@ -707,13 +707,9 @@ def _plot2d(plotfunc):
                 "with a three-dimensional array (per facet)"
             )
 
-        darray = darray.squeeze()
-
         xlab, ylab = _infer_xy_labels(
             darray=darray, x=x, y=y, imshow=imshow_rgb, rgb=rgb
         )
-
-        darray = darray.compute()
 
         # better to pass the ndarrays directly to plotting functions
         xval = darray[xlab].values

@@ -419,7 +419,7 @@ class FacetGrid:
         )
 
         for (_, subset), ax in zip(self.data, self.axes.flat):
-            mappable = func(subset, x=x, y=y, ax=ax, **func_kwargs)
+            mappable = func(subset.squeeze(), x=x, y=y, ax=ax, **func_kwargs)
             self._mappables.append(mappable)
 
         self._finalize_grid(x, y)
@@ -451,7 +451,7 @@ class FacetGrid:
                 hue=hue,
                 add_legend=False,
                 _labels=False,
-                **kwargs
+                **kwargs,
             )
             self._mappables.append(mappable)
 
