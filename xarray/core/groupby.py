@@ -1053,6 +1053,12 @@ class DatasetGroupBy(GroupBy, ImplementsDatasetReduce):
         """
         return self.map(lambda ds: ds.assign(**kwargs))
 
+    @property
+    def plot(self):
+        raise NotImplementedError(
+            "Plotting not implemented for DatasetGroupBy objects yet."
+        )
+
 
 ops.inject_reduce_methods(DatasetGroupBy)
 ops.inject_binary_ops(DatasetGroupBy)

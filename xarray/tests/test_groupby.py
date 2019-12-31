@@ -523,5 +523,10 @@ def test_groupby_bins_timeseries():
     assert_identical(actual, expected)
 
 
+def test_dataset_groupby_plot_error(dataset):
+    with pytest.raises(NotImplementedError):
+        dataset.groupby("x").plot()
+
+
 # TODO: move other groupby tests from test_dataset and test_dataarray over here
 # TODO: add tests for groupby.__getitem__
