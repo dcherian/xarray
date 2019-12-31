@@ -266,6 +266,8 @@ class GroupBy(SupportsArithmetic):
         "_unique_coord",
         "_dims",
         "_coords",
+        "attrs",
+        "name",
     )
 
     def __init__(

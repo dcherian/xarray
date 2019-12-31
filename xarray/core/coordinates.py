@@ -18,7 +18,7 @@ import pandas as pd
 from . import formatting, indexing
 from .indexes import Indexes
 from .merge import merge_coordinates_without_align, merge_coords
-from .utils import Frozen, ReprObject, either_dict_or_kwargs
+from .utils import Frozen, ReprObject, dict_equiv, either_dict_or_kwargs
 from .variable import Variable
 
 if TYPE_CHECKING:
@@ -116,6 +116,51 @@ class Coordinates(Mapping[Hashable, "DataArray"]):
             [self.variables, other_vars], priority_arg=1, indexes=self.indexes
         )
         self._update_coords(coords, indexes)
+
+    def _all_compat(self, other: "Coordinates", compat_str: str) -> bool:
+        """Helper function for equals and identical
+        """
+
+        # some stores (e.g., scipy) do not seem to preserve order, so don't
+        # require matching order for equality
+        def compat(x: Variable, y: Variable) -> bool:
+            return getattr(x, compat_str)(y)
+
+        return dict_equiv(self.variables, other.variables, compat=compat)
+
+    def equals(self, other: "Coordinates") -> bool:
+        """Two Coordinates are equal if they have matching variables,
+        all of which are equal.
+
+        Datasets can still be equal (like pandas objects) if they have NaN
+        values in the same locations.
+
+        This method is necessary because `v1 == v2` for ``Dataset``
+        does element-wise comparisons (like numpy.ndarrays).
+
+        See Also
+        --------
+        Dataset.broadcast_equals
+        Dataset.identical
+        """
+        try:
+            return self._all_compat(other, "equals")
+        except (TypeError, AttributeError):
+            return False
+
+    def identical(self, other: "Coordinates") -> bool:
+        """Like equals, but also checks all dataset attributes and the
+        attributes on all variables and coordinates.
+
+        See Also
+        --------
+        Dataset.broadcast_equals
+        Dataset.equals
+        """
+        try:
+            return self._all_compat(other, "identical")
+        except (TypeError, AttributeError):
+            return False
 
     def _merge_raw(self, other):
         """For use with binary arithmetic."""

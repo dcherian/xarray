@@ -15,7 +15,10 @@ def dataset():
         {"x": ["a", "b", "c"], "y": [1, 2, 3, 4], "z": [1, 2]},
     )
     ds["boo"] = (("z", "y"), [["f", "g", "h", "j"]] * 2)
-
+    ds.attrs["attr1"] = "attr2"
+    ds["boo"].attrs["test"] = "test"
+    ds["foo"].attrs["test"] = "test"
+    dataset = ds
     return ds
 
 
@@ -37,9 +40,30 @@ def test_consolidate_slices():
         _consolidate_slices([slice(3), 4])
 
 
-def test_groupby_dims_property(dataset):
-    assert dataset.groupby("x").dims == dataset.isel(x=1).dims
-    assert dataset.groupby("y").dims == dataset.isel(y=1).dims
+@pytest.mark.parametrize("group", ["boo", "x"])
+def test_groupby_attrs_name_property(dataset, group):
+    assert dataset.groupby("boo").attrs == dataset.attrs
+    dataset.set_coords("boo").foo.groupby(group).attrs = dataset.foo.attrs
+    dataset.set_coords("boo").foo.groupby(group).name = "foo"
+
+
+def test_groupby_dims_coords_property(dataset):
+    grouped = dataset.groupby("x")
+    assert grouped.dims == dataset.isel(x=1).dims
+    assert grouped.coords.identical(dataset.isel(x=1, drop=True).coords)
+
+    grouped = dataset.groupby("y")
+    assert grouped.dims == dataset.isel(y=1).dims
+    assert grouped.coords.identical(dataset.isel(y=1, drop=True).coords)
+
+    stacked = dataset.stack({"xy": ("x", "y")})
+    grouped = stacked.groupby("xy")
+    assert grouped.dims == stacked.isel(xy=0).dims
+    assert grouped.coords.identical(stacked.isel(xy=0, drop=True).coords)
+
+
+def test_groupby_coords_property(dataset):
+    assert dataset.groupby("y").dims == dataset.isel(y=1).coords
 
     stacked = dataset.stack({"xy": ("x", "y")})
     assert stacked.groupby("xy").dims == stacked.isel(xy=0).dims
@@ -500,5 +524,4 @@ def test_groupby_bins_timeseries():
 
 
 # TODO: move other groupby tests from test_dataset and test_dataarray over here
-# TODO: add tests for groupby.coords
 # TODO: add tests for groupby.__getitem__
