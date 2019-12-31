@@ -41,13 +41,13 @@ def test_consolidate_slices():
 
 
 @pytest.mark.parametrize("group", ["boo", "x"])
-def test_groupby_attrs_name_property(dataset, group):
+def test_groupby_attrs_name_properties(dataset, group):
     assert dataset.groupby("boo").attrs == dataset.attrs
     dataset.set_coords("boo").foo.groupby(group).attrs = dataset.foo.attrs
     dataset.set_coords("boo").foo.groupby(group).name = "foo"
 
 
-def test_groupby_dims_coords_property(dataset):
+def test_groupby_dims_coords_properties(dataset):
     grouped = dataset.groupby("x")
     assert grouped.dims == dataset.isel(x=1).dims
     assert grouped.coords.identical(dataset.isel(x=1, drop=True).coords)
@@ -60,13 +60,6 @@ def test_groupby_dims_coords_property(dataset):
     grouped = stacked.groupby("xy")
     assert grouped.dims == stacked.isel(xy=0).dims
     assert grouped.coords.identical(stacked.isel(xy=0, drop=True).coords)
-
-
-def test_groupby_coords_property(dataset):
-    assert dataset.groupby("y").dims == dataset.isel(y=1).coords
-
-    stacked = dataset.stack({"xy": ("x", "y")})
-    assert stacked.groupby("xy").dims == stacked.isel(xy=0).dims
 
 
 def test_multi_index_groupby_map(dataset):
