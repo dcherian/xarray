@@ -18,7 +18,6 @@ def dataset():
     ds.attrs["attr1"] = "attr2"
     ds["boo"].attrs["test"] = "test"
     ds["foo"].attrs["test"] = "test"
-    dataset = ds
     return ds
 
 
@@ -494,9 +493,9 @@ def test_groupby_reduce_dimension_error(array):
         grouped.mean(("x", "y", "asd"))
 
     grouped = array.groupby("y", squeeze=False)
-    assert_identical(array, grouped.mean())
+    assert_equal(array, grouped.mean())
 
-    assert_identical(array.mean("x"), grouped.reduce(np.mean, "x"))
+    assert_equal(array.mean("x"), grouped.reduce(np.mean, "x"))
     assert_allclose(array.mean(["x", "z"]), grouped.reduce(np.mean, ["x", "z"]))
 
 
