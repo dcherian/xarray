@@ -478,9 +478,18 @@ class GroupBy(SupportsArithmetic):
             and key not in self.coords
             and key not in self.dims
         ):
+            dims = self.dims
+            if isinstance(dims, dict):
+                # DatasetGroupBy
+                dims = set(list(dims.keys()))
+            else:
+                dims = set(dims)
+            if self._stacked_dim:
+                dims = dims - set([self._stacked_dim])
+
             raise ValueError(
-                f"Expected one of dimension {self._group_dim}, dimensions {self._obj.dims} "
-                f"or coordinates {self.coords._coord_names}. Received {key}."
+                f"Expected one of dimensions {dims} "
+                f"or coordinates {self.coords._names}. Received {key}."
             )
 
         if key == self._unique_coord.name:

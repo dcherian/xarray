@@ -4,6 +4,7 @@ import pytest
 
 import xarray as xr
 from xarray.core.groupby import _consolidate_slices
+from xarray.core.variable import IndexVariable
 
 from . import assert_allclose, assert_equal, assert_identical, raises_regex
 
@@ -59,6 +60,22 @@ def test_groupby_dims_coords_properties(dataset):
     grouped = stacked.groupby("xy")
     assert grouped.dims == stacked.isel(xy=0).dims
     assert grouped.coords.identical(stacked.isel(xy=0, drop=True).coords)
+
+
+def test_groupby_getitem(dataset):
+
+    grouped = dataset.groupby("x")
+    for dim in dataset.dims:
+        assert_identical(grouped[dim], dataset[dim])
+
+    grouped = dataset.groupby("boo")
+    expected = IndexVariable("boo", ["f", "g", "h", "j"])
+    assert_identical(grouped["boo"], expected)
+    for dim in dataset.dims:
+        assert_identical(grouped[dim], dataset[dim])
+
+    stacked = dataset.stack({"xy": ("x", "y")})
+    grouped = stacked.groupby("xy")
 
 
 def test_multi_index_groupby_map(dataset):
