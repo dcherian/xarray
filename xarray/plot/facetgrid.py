@@ -669,11 +669,16 @@ class FacetGrid:
         self : FacetGrid object
 
         """
+        from ..core.groupby import GroupBy
+
         plt = import_matplotlib_pyplot()
 
         for ax, namedict in zip(self.axes.flat, self.name_dicts.flat):
             if namedict is not None:
-                data = self.data.loc[namedict]
+                if not isinstance(self.data, GroupBy):
+                    data = self.data.loc[namedict]
+                else:
+                    data = self.data.get_group(namedict).squeeze()
                 plt.sca(ax)
                 innerargs = [data[a].values for a in args]
                 maybe_mappable = func(*innerargs, **kwargs)
