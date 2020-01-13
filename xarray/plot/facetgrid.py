@@ -405,12 +405,9 @@ class FacetGrid:
         func_kwargs.update({"add_colorbar": False, "add_labels": False})
 
         # Get x, y labels for the first subplot
-        grouped = self.data
-        first_group = grouped._obj.isel(
-            **{grouped._group_dim: grouped._group_indices[0]}
-        ).squeeze()
+        first_label = list(self.name_dicts.flat[0].values())[0]
         x, y = _infer_xy_labels(
-            darray=first_group,
+            darray=self.data.get_group(first_label),
             x=x,
             y=y,
             imshow=func.__name__ == "imshow",
