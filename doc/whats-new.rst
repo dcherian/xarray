@@ -28,7 +28,7 @@ New Features
 - Implement :py:func:`median` and :py:func:`nanmedian` for dask arrays. This works by rechunking
   to a single chunk along all reduction axes. (:issue:`2999`).
   By `Deepak Cherian <https://github.com/dcherian>`_.
-- :py:func:`xarray.concat` now preserves attributes from the first Variable.
+- :py:func:`~xarray.concat` now preserves attributes from the first Variable.
   (:issue:`2575`, :issue:`2060`, :issue:`1614`)
   By `Deepak Cherian <https://github.com/dcherian>`_.
 - :py:meth:`Dataset.quantile`, :py:meth:`DataArray.quantile` and ``GroupBy.quantile``
@@ -41,24 +41,24 @@ New Features
 - Added the ``count`` reduction method to both :py:class:`~core.rolling.DatasetCoarsen`
   and :py:class:`~core.rolling.DataArrayCoarsen` objects. (:pull:`3500`)
   By `Deepak Cherian <https://github.com/dcherian>`_
-- Add `attrs_file` option in :py:func:`~xarray.open_mfdataset` to choose the
+- Add ``attrs_file`` option in :py:func:`~xarray.open_mfdataset` to choose the
   source file for global attributes in a multi-file dataset (:issue:`2382`,
-  :pull:`3498`) by `Julien Seguinot <https://github.com/juseg>_`.
+  :pull:`3498`) by `Julien Seguinot <https://github.com/juseg>`_.
 - :py:meth:`Dataset.swap_dims` and :py:meth:`DataArray.swap_dims`
   now allow swapping to dimension names that don't exist yet. (:pull:`3636`)
   By `Justus Magin <https://github.com/keewis>`_.
 - Extend :py:class:`core.accessor_dt.DatetimeAccessor` properties 
-  and support `.dt` accessor for timedelta 
+  and support ``.dt`` accessor for timedelta
   via :py:class:`core.accessor_dt.TimedeltaAccessor` (:pull:`3612`)
   By `Anderson Banihirwe <https://github.com/andersy005>`_.
 
 Bug fixes
 ~~~~~~~~~
 
-- Fix :py:meth:`xarray.combine_by_coords` to allow for combining incomplete
+- Fix :py:meth:`~xarray.combine_by_coords` to allow for combining incomplete
   hypercubes of Datasets (:issue:`3648`).  By `Ian Bolliger
   <https://github.com/bolliger32>`_.
-- Fix :py:meth:`xarray.combine_by_coords` when combining cftime coordinates
+- Fix :py:meth:`~xarray.combine_by_coords` when combining cftime coordinates
   which span long time intervals (:issue:`3535`).  By `Spencer Clark
   <https://github.com/spencerkclark>`_.
 - Fix plotting with transposed 2D non-dimensional coordinates. (:issue:`3138`, :pull:`3441`)
