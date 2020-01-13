@@ -559,9 +559,11 @@ GroupBy objects
    core.groupby.DataArrayGroupBy
    core.groupby.DataArrayGroupBy.map
    core.groupby.DataArrayGroupBy.reduce
+   core.groupby.DataArrayGroupBy.get_group
    core.groupby.DatasetGroupBy
    core.groupby.DatasetGroupBy.map
    core.groupby.DatasetGroupBy.reduce
+   core.groupby.DatasetGroupBy.get_group
 
 Rolling objects
 ===============

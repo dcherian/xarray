@@ -499,4 +499,17 @@ def test_groupby_bins_timeseries():
     assert_identical(actual, expected)
 
 
+def test_groupby_get_group(dataset):
+
+    assert_identical(dataset.sel(x="a"), dataset.groupby("x").get_group("a"))
+    assert_identical(dataset.sel(z=1), dataset.groupby("z").get_group(1))
+
+    assert_identical(dataset.foo.sel(x="a"), dataset.foo.groupby("x").get_group("a"))
+    assert_identical(dataset.foo.sel(z=1), dataset.foo.groupby("z").get_group(1))
+
+    actual = dataset.groupby("boo").get_group("f").unstack().transpose("x", "y", "z")
+    expected = dataset.sel(y=[1], z=[1, 2]).transpose("x", "y", "z")
+    assert_identical(expected, actual)
+
+
 # TODO: move other groupby tests from test_dataset and test_dataarray over here
