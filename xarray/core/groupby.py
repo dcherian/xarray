@@ -497,12 +497,17 @@ class GroupBy(SupportsArithmetic):
                 dims = set(list(dims.keys()))
             else:
                 dims = set(dims)
+            stack_msg = ""
             if self._stacked_dim:
                 dims = dims - set([self._stacked_dim])
+                stacked_dims = self._obj.indexes[self._stacked_dim].names
+                if key in stacked_dims:
+                    stack_msg = f"Dimensions {stacked_dims} have been stacked as part of the grouping process."
 
             raise ValueError(
                 f"Expected one of dimensions {dims} "
-                f"or coordinates {self.coords._names}. Received {key}."
+                f"or coordinates {self.coords._names}. Received {key!r}. "
+                f"{stack_msg}"
             )
 
         if key == self._unique_coord.name:

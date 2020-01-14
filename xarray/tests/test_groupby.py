@@ -71,11 +71,17 @@ def test_groupby_getitem(dataset):
     grouped = dataset.groupby("boo")
     expected = IndexVariable("boo", ["f", "g", "h", "j"])
     assert_identical(grouped["boo"], expected)
-    for dim in dataset.dims:
-        assert_identical(grouped[dim], dataset[dim])
+    assert_identical(grouped["x"], dataset["x"])
+    with raises_regex(ValueError, "have been stacked"):
+        grouped["y"]
+    with raises_regex(ValueError, "have been stacked"):
+        grouped["z"]
 
     stacked = dataset.stack({"xy": ("x", "y")})
     grouped = stacked.groupby("xy")
+    with raises_regex(ValueError, "Expected one of dimensions {'z'}"):
+        grouped["x"]
+    assert_identical(grouped["z"], dataset["z"])
 
 
 def test_multi_index_groupby_map(dataset):
