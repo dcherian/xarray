@@ -559,3 +559,4 @@ def test_groupby_get_group(dataset):
 # TODO: move other groupby tests from test_dataset and test_dataarray over here
 # TODO: add tests for groupby.__getitem__
 # TODO: add tests for groupby.get_group
+# TODO: add tests for fg.map with GroupBy
