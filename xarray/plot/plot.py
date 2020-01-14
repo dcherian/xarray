@@ -180,7 +180,7 @@ def plot(
     if isinstance(darray, GroupBy):
         grouped_over_unique_coord = darray._unique_coord.equals(
             darray._obj.coords[darray._group_dim]
-        )
+        ) or len(darray._unique_coord) == len(darray[darray._group_dim])
         if grouped_over_unique_coord:
             plot_dims.discard(darray._group_dim)
 

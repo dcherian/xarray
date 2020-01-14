@@ -2209,14 +2209,14 @@ class TestDataArrayGroupByPlot:
             {
                 "variable": (
                     ("lat", "lon", "time"),
-                    np.arange(60.0).reshape((4, 3, 5)),
+                    np.arange(72.0).reshape((4, 3, 6)),
                 ),
                 "id": (("lat", "lon"), np.arange(12.0).reshape((4, 3))),
             },
             coords={
                 "lat": np.arange(4),
                 "lon": np.arange(3),
-                "time": pd.date_range(start="2001-01-01", freq="12H", periods=5),
+                "time": pd.date_range(start="2001-01-01", freq="12H", periods=6),
             },
         )
 
@@ -2225,9 +2225,15 @@ class TestDataArrayGroupByPlot:
     def test_cftime_grouping(self):
         ds = self.ds.copy()
         ds["time"] = xr.cftime_range(
-            start="0001-01-01", periods=5, freq="12H", calendar="noleap"
+            start="0001-01-01", periods=6, freq="12H", calendar="noleap"
         )
         ds.variable.sel(lat=0).groupby("time.day").plot(col="day", x="lon", sharey=True)
+
+        # TODO: can't plot single vector with plot2d when axis is CFTime
+        with raises_regex(TypeError, "unsupported operand"):
+            ds.variable.sel(lat=0).isel(time=slice(-1)).groupby("time.day").plot(
+                col="day", x="lon", sharey=True
+            )
 
     def test_time_grouping(self):
         self.ds.variable.sel(lat=0).groupby("time.day").plot(
