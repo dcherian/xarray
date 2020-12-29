@@ -741,6 +741,7 @@ def interp_func(var, x, new_x, method, kwargs):
             dtype=var.dtype,
             new_axes=new_axes,
             meta=var._meta,
+            align_arrays=False,
         )
 
     return _interpnd(var, x, new_x, func, kwargs)
