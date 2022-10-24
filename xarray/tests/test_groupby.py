@@ -493,9 +493,10 @@ repr_da = xr.DataArray(
 @pytest.mark.parametrize("obj", [repr_da, repr_da.to_dataset(name="a")])
 def test_groupby_repr(obj, dim) -> None:
     actual = repr(obj.groupby(dim))
+    N = len(np.unique(obj[dim]))
     expected = f"{obj.__class__.__name__}GroupBy"
-    expected += ", grouped over %r" % dim
-    expected += "\n%r groups with labels " % (len(np.unique(obj[dim])))
+    expected += f", grouped over 1 grouper(s), {N} groups:"
+    expected += f"\n\t{dim!r}: {N} groups with labels "
     if dim == "x":
         expected += "1, 2, 3, 4, 5."
     elif dim == "y":
@@ -511,8 +512,8 @@ def test_groupby_repr(obj, dim) -> None:
 def test_groupby_repr_datetime(obj) -> None:
     actual = repr(obj.groupby("t.month"))
     expected = f"{obj.__class__.__name__}GroupBy"
-    expected += ", grouped over 'month'"
-    expected += "\n%r groups with labels " % (len(np.unique(obj.t.dt.month)))
+    expected += ", grouped over 1 grouper(s), 12 groups:\n"
+    expected += "\t'month': 12 groups with labels "
     expected += "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12."
     assert actual == expected
 
@@ -1484,6 +1485,7 @@ class TestDataArrayGroupBy:
         )
 
         with xr.set_options(use_flox=use_flox):
+            # GH7198
             actual = array.groupby_bins("dim_0", bins=bins, **cut_kwargs).sum()
             assert_identical(expected, actual)
 

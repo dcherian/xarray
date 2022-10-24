@@ -55,7 +55,7 @@ class Resample(GroupBy[T_Xarray]):
         **kwargs,
     ) -> T_Xarray:
         result = super()._flox_reduce(dim=dim, keep_attrs=keep_attrs, **kwargs)
-        result = result.rename({RESAMPLE_DIM: self._group_dim})
+        result = result.rename({RESAMPLE_DIM: self._dim})
         return result
 
     def _drop_coords(self) -> T_Xarray:
