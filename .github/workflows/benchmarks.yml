@@ -22,7 +22,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up conda environment
-        uses: mamba-org/provision-with-micromamba@v12
+        uses: mamba-org/provision-with-micromamba@f347426e5745fe3dfc13ec5baf20496990d0281f
         with:
           environment-file: ${{env.CONDA_ENV_FILE}}
           environment-name: xarray-tests
