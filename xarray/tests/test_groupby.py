@@ -29,6 +29,7 @@ from xarray.tests import (
     assert_identical,
     create_test_data,
     has_cftime,
+    has_dask,
     has_flox,
     has_pandas_ge_2_2,
     requires_cftime,
@@ -2863,3 +2864,43 @@ def test_multiple_groupers_mixed(use_flox) -> None:
 # 1. lambda x: x
 # 2. grouped-reduce on unique coords is identical to array
 # 3. group_over == groupby-reduce along other dimensions
+
+
+# Put your MCVE code here
+import xarray as xr
+
+
+@pytest.mark.parametrize(
+    "chunk",
+    [
+        pytest.param(
+            True, marks=pytest.mark.skipif(not has_dask, reason="requires dask")
+        ),
+        False,
+    ],
+)
+@pytest.mark.parametrize(
+    "use_cftime",
+    [
+        pytest.param(
+            True, marks=pytest.mark.skipif(not has_cftime, reason="requires cftime")
+        ),
+        False,
+    ],
+)
+def test_datetime_mean(chunk, use_cftime):
+    ds = xr.Dataset(
+        {
+            "var1": (
+                ("time",),
+                xr.date_range(
+                    "2021-10-31", periods=10, freq="D", use_cftime=use_cftime
+                ),
+            ),
+            "var2": (("x",), list(range(10))),
+        }
+    )
+    if chunk:
+        ds = ds.chunk()
+    assert "var1" in ds.groupby("x").mean("time")
+    assert "var1" in ds.mean("x")

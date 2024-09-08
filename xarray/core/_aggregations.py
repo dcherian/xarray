@@ -468,10 +468,6 @@ class DatasetAggregations:
         :ref:`agg`
             User guide on reduction or aggregation operations.
 
-        Notes
-        -----
-        Non-numeric variables will be removed prior to reducing.
-
         Examples
         --------
         >>> da = xr.DataArray(
@@ -510,7 +506,7 @@ class DatasetAggregations:
             duck_array_ops.mean,
             dim=dim,
             skipna=skipna,
-            numeric_only=True,
+            numeric_only=False,
             keep_attrs=keep_attrs,
             **kwargs,
         )
@@ -1629,10 +1625,6 @@ class DataArrayAggregations:
         Dataset.mean
         :ref:`agg`
             User guide on reduction or aggregation operations.
-
-        Notes
-        -----
-        Non-numeric variables will be removed prior to reducing.
 
         Examples
         --------
@@ -2903,8 +2895,6 @@ class DatasetGroupByAggregations:
         Pass flox-specific keyword arguments in ``**kwargs``.
         See the `flox documentation <https://flox.readthedocs.io>`_ for more.
 
-        Non-numeric variables will be removed prior to reducing.
-
         Examples
         --------
         >>> da = xr.DataArray(
@@ -2952,7 +2942,7 @@ class DatasetGroupByAggregations:
                 func="mean",
                 dim=dim,
                 skipna=skipna,
-                numeric_only=True,
+                numeric_only=False,
                 # fill_value=fill_value,
                 keep_attrs=keep_attrs,
                 **kwargs,
@@ -2962,7 +2952,7 @@ class DatasetGroupByAggregations:
                 duck_array_ops.mean,
                 dim=dim,
                 skipna=skipna,
-                numeric_only=True,
+                numeric_only=False,
                 keep_attrs=keep_attrs,
                 **kwargs,
             )
@@ -4391,8 +4381,6 @@ class DatasetResampleAggregations:
         Pass flox-specific keyword arguments in ``**kwargs``.
         See the `flox documentation <https://flox.readthedocs.io>`_ for more.
 
-        Non-numeric variables will be removed prior to reducing.
-
         Examples
         --------
         >>> da = xr.DataArray(
@@ -4440,7 +4428,7 @@ class DatasetResampleAggregations:
                 func="mean",
                 dim=dim,
                 skipna=skipna,
-                numeric_only=True,
+                numeric_only=False,
                 # fill_value=fill_value,
                 keep_attrs=keep_attrs,
                 **kwargs,
@@ -4450,7 +4438,7 @@ class DatasetResampleAggregations:
                 duck_array_ops.mean,
                 dim=dim,
                 skipna=skipna,
-                numeric_only=True,
+                numeric_only=False,
                 keep_attrs=keep_attrs,
                 **kwargs,
             )
@@ -5840,8 +5828,6 @@ class DataArrayGroupByAggregations:
         Pass flox-specific keyword arguments in ``**kwargs``.
         See the `flox documentation <https://flox.readthedocs.io>`_ for more.
 
-        Non-numeric variables will be removed prior to reducing.
-
         Examples
         --------
         >>> da = xr.DataArray(
@@ -7219,8 +7205,6 @@ class DataArrayResampleAggregations:
         especially with dask arrays. Xarray will use flox by default if installed.
         Pass flox-specific keyword arguments in ``**kwargs``.
         See the `flox documentation <https://flox.readthedocs.io>`_ for more.
-
-        Non-numeric variables will be removed prior to reducing.
 
         Examples
         --------

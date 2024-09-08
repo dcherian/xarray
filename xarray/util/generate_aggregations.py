@@ -24,8 +24,8 @@ MODULE_PREAMBLE = '''\
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any
 
 from xarray.core import duck_array_ops
 from xarray.core.options import OPTIONS
@@ -496,7 +496,7 @@ AGGREGATION_METHODS = (
     Method("any", bool_reduce=True),
     Method("max", extra_kwargs=(skipna,)),
     Method("min", extra_kwargs=(skipna,)),
-    Method("mean", extra_kwargs=(skipna,), numeric_only=True),
+    Method("mean", extra_kwargs=(skipna,), numeric_only=False),
     Method("prod", extra_kwargs=(skipna, min_count), numeric_only=True),
     Method("sum", extra_kwargs=(skipna, min_count), numeric_only=True),
     Method("std", extra_kwargs=(skipna, ddof), numeric_only=True),

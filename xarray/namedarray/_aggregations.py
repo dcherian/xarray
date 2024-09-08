@@ -363,10 +363,6 @@ class NamedArrayAggregations:
         :ref:`agg`
             User guide on reduction or aggregation operations.
 
-        Notes
-        -----
-        Non-numeric variables will be removed prior to reducing.
-
         Examples
         --------
         >>> from xarray.namedarray.core import NamedArray
