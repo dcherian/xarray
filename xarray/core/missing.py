@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import datetime as dt
 import warnings
-from collections.abc import Callable, Hashable, Sequence
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from functools import partial
+from itertools import chain, zip_longest
 from numbers import Number
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -19,6 +20,7 @@ from xarray.core.duck_array_ops import (
     reshape,
     timedelta_to_numeric,
 )
+from xarray.core.nputils import inverse_permutation
 from xarray.core.options import _get_keep_attrs
 from xarray.core.types import Interp1dOptions, InterpnOptions, InterpOptions
 from xarray.core.utils import OrderedSet, is_scalar
@@ -631,31 +633,27 @@ def interp(var, indexes_coords, method: InterpOptions, **kwargs):
     if not indexes_coords:
         return var.copy()
 
-    result = var
-
     if method in ["linear", "nearest", "slinear"]:
         # decompose the interpolation into a succession of independent interpolation.
         indexes_coords = decompose_interp(indexes_coords)
     else:
         indexes_coords = [indexes_coords]
 
+    result = var
     for indep_indexes_coords in indexes_coords:
         var = result
 
         # target dimensions
         dims = list(indep_indexes_coords)
         x, new_x = zip(*[indep_indexes_coords[d] for d in dims], strict=True)
-        destination = broadcast_variables(*new_x)
 
         # transpose to make the interpolated axis to the last position
         broadcast_dims = [d for d in var.dims if d not in dims]
         original_dims = broadcast_dims + dims
-        new_dims = broadcast_dims + list(destination[0].dims)
-        interped = interp_func(
-            var.transpose(*original_dims).data, x, destination, method, kwargs
-        )
 
-        result = Variable(new_dims, interped, attrs=var.attrs, fastpath=True)
+        result = interp_func(
+            var.transpose(*original_dims), x, new_x, method=method, kwargs=kwargs
+        )
 
         # dimension of the output array
         out_dims: OrderedSet = OrderedSet()
@@ -669,15 +667,171 @@ def interp(var, indexes_coords, method: InterpOptions, **kwargs):
     return result
 
 
-def interp_func(var, x, new_x, method: InterpOptions, kwargs):
+def _chunked_vectorized_interp_helper(
+    func: Callable[np.ndarray, ...],
+    data,
+    *,
+    x: tuple[np.ndarray, ...],
+    new_x: tuple[np.ndarray, ...],
+    axis: tuple[int, ...],
+    depth: int,
+    blockwise_kwargs: Mapping[Any, Any],
+):
+    """
+    Helper function to apply an interpolator ``func`` to blocks of the data.
+
+    ``func`` will only be applied to blocks that are necessary to construct the output.
+    The blocks of interest are determined by comparing ``new_x`` to ``x``, both of which
+    must be in-memory arrays.
+
+    Parameters
+    ----------
+    func: Callable
+        interpolation function that will be called on each block as
+        ``func(data, *interleaved_x_new_x, **blockwise_kwargs)``
+    data: dask.array.Array
+        array to interpolate
+    x : tuple[np.ndarray, ...]
+        input array coordinates
+    new_x : tuple[np.ndarray, ...]
+        output array coordinates to interpolate to
+    axis : tuple[int, ...]
+        axes of `data` along which to interpolate
+    depth: int TODO: make dict[int, int]
+        The number of elements that each block should share with its neighbors
+        If a tuple or dict then this can be different per axis.
+    blockwise_kwargs:
+        Arbitrary kwargs unpacked and passed to func
+
+    Returns
+    ------
+    dask.array.Array
+    """
+    import dask
+    import toolz as tlz
+
+    from xarray.core.dask_array_ops import subset_to_blocks
+
+    assert all(new_coord.ndim == 1 for new_coord in new_x)
+
+    chunksizes = tuple(data.chunks[ax] for ax in axis)
+
+    chunkmanager = get_chunked_array_type(data)
+
+    if all(len(_) == 1 for _ in chunksizes):
+        # no overlap needed if this is a blockwise op
+        overlapper = lambda x, depth: x
+        # TODO: more short-circuiting
+    else:
+        overlapper = partial(chunkmanager.overlap, boundary=None)
+    overlapped = overlapper(data, depth=dict.fromkeys(axis, depth))
+
+    # chunk and overlap the coordinate arrays appropriately
+    chunked_grid_coords = tuple(
+        overlapper(chunkmanager.from_array(coord, chunks=chunks), depth={0: depth})
+        for ax, (coord, chunks) in enumerate(zip(x, chunksizes, strict=True))
+    )
+    needed_chunks = tuple(
+        zip(
+            *(
+                tuple(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
+                for ax, desired, coord, chunks in zip(
+                    axis, new_x, x, chunksizes, strict=True
+                )
+            ),
+            strict=True,
+        )
+    )
+
+    # maps a block index to indices of the desired points in that block
+    grouped = tlz.groupby(
+        key=lambda x: tuple(map(int, x[1])), seq=enumerate(needed_chunks)
+    )
+    blocks_to_idx = {
+        block_id: tuple(_[0] for _ in vals) for block_id, vals in grouped.items()
+    }
+    desired_chunks = tuple(len(a) for a in blocks_to_idx.values())
+
+    # subset to needed blocks only
+    subset = subset_to_blocks(
+        overlapped,
+        coords=tuple(zip(*blocks_to_idx.keys(), strict=True)),
+        new_chunks=desired_chunks,
+        token="var",
+    )
+
+    grid_block_coords = []
+    for ax, coord in enumerate(chunked_grid_coords):
+        chunkids = [key[ax] for key in blocks_to_idx]
+        grid_block_coords.append(
+            subset_to_blocks(
+                coord,
+                coords=(chunkids,),
+                new_chunks=tuple(chunksizes[ax][i] for i in chunkids),
+                # TODO: more tokenize
+                token=f"interp-ax-{ax}",
+            )
+        )
+    # sort the output points by block-id
+    # so that every point in a single block occurs near each other
+    argsorter = np.concatenate(list(blocks_to_idx.values()))
+    invert_argsorter = inverse_permutation(argsorter)
+
+    # The axis indices here are meaningless. I'm faking them to build a purely blockwise graph.
+    # each block is sent to _interp with the appropriate grid coordinates, and the output points to
+    # interpolate to.
+    ndim = len(x)
+    new_axis = (data.ndim - ndim,)
+    out_axis = tuple(range(data.ndim - ndim)) + new_axis
+    result = chunkmanager.blockwise(
+        func,
+        out_axis,
+        subset,
+        out_axis,
+        *chain(
+            # input grid coords
+            *zip_longest(grid_block_coords, (new_axis,), fillvalue=new_axis),
+            # output point coords
+            *zip_longest(
+                (
+                    chunkmanager.from_array(
+                        points_single_axis[argsorter], desired_chunks
+                    )
+                    for points_single_axis in new_x
+                ),
+                (new_axis,),
+                fillvalue=new_axis,
+            ),
+        ),
+        concatenate=False,
+        # TODO: FIX THIS
+        adjust_chunks={1: desired_chunks},
+        # This is important, it stops all broadcasting.
+        align_arrays=False,
+        **blockwise_kwargs,
+    )
+    # argsort back to the original order of points
+    result = dask.array.take(result, indices=invert_argsorter, axis=-1)
+    return result
+
+
+def interp_func(
+    var: Variable,
+    x: tuple[Variable],
+    new_x: tuple[Variable],
+    *,
+    varname="data",
+    method: InterpOptions,
+    kwargs,
+) -> Variable:
     """
     multi-dimensional interpolation for array-like. Interpolated axes should be
     located in the last position.
 
     Parameters
     ----------
-    var : np.ndarray or dask.array.Array
-        Array to be interpolated. The final dimension is interpolated.
+    var : Variable
+        Variable to be interpolated. The final dimension is interpolated.
     x : a list of 1d array.
         Original coordinates. Should not contain NaN.
     new_x : a list of 1d array
@@ -686,66 +840,35 @@ def interp_func(var, x, new_x, method: InterpOptions, kwargs):
         {'linear', 'nearest', 'zero', 'slinear', 'quadratic', 'cubic', 'pchip', 'akima',
             'makima', 'barycentric', 'krogh'} for 1-dimensional interpolation.
         {'linear', 'nearest'} for multidimensional interpolation
-    **kwargs
+    kwargs
         Optional keyword arguments to be passed to scipy.interpolator
 
     Returns
     -------
     interpolated: array
         Interpolated array
-
-    Notes
-    -----
-    This requires scipy installed.
-
-    See Also
-    --------
-    scipy.interpolate.interp1d
     """
+    data = var.data
     if not x:
-        return var.copy()
+        return data.copy()
 
     if len(x) == 1:
         func, kwargs = _get_interpolator(method, vectorizeable_only=True, **kwargs)
     else:
         func, kwargs = _get_interpolator_nd(method, **kwargs)
 
-    if is_chunked_array(var):
-        chunkmanager = get_chunked_array_type(var)
+    broadcast_new_x = broadcast_variables(*new_x)
+    new_dims = var.dims[: -len(x)] + tuple(broadcast_new_x[0].dims)
+
+    if is_chunked_array(data):
+        chunkmanager = get_chunked_array_type(data)
 
         ndim = var.ndim
         nconst = ndim - len(x)
-
-        out_ind = list(range(nconst)) + list(range(ndim, ndim + new_x[0].ndim))
-
-        # blockwise args format
-        x_arginds = [[_x, (nconst + index,)] for index, _x in enumerate(x)]
-        x_arginds = [item for pair in x_arginds for item in pair]
-        new_x_arginds = [
-            [_x, [ndim + index for index in range(_x.ndim)]] for _x in new_x
-        ]
-        new_x_arginds = [item for pair in new_x_arginds for item in pair]
-
-        args = (var, range(ndim), *x_arginds, *new_x_arginds)
-
-        _, rechunked = chunkmanager.unify_chunks(*args)
-
-        args = tuple(
-            elem for pair in zip(rechunked, args[1::2], strict=True) for elem in pair
-        )
-
-        new_x = rechunked[1 + (len(rechunked) - 1) // 2 :]
-
-        new_x0_chunks = new_x[0].chunks
-        new_x0_shape = new_x[0].shape
-        new_x0_chunks_is_not_none = new_x0_chunks is not None
-        new_axes = {
-            ndim + i: new_x0_chunks[i] if new_x0_chunks_is_not_none else new_x0_shape[i]
-            for i in range(new_x[0].ndim)
-        }
+        dest_ndim = broadcast_new_x[0].ndim
 
         # if useful, reuse localize for each chunk of new_x
-        localize = (method in ["linear", "nearest"]) and new_x0_chunks_is_not_none
+        localize = method in ["linear", "nearest"]
 
         # scipy.interpolate.interp1d always forces to float.
         # Use the same check for blockwise as well:
@@ -754,23 +877,100 @@ def interp_func(var, x, new_x, method: InterpOptions, kwargs):
         else:
             dtype = var.dtype
 
-        meta = var._meta
-
-        return chunkmanager.blockwise(
-            _chunked_aware_interpnd,
-            out_ind,
-            *args,
-            interp_func=func,
+        blockwise_kwargs = dict(
             interp_kwargs=kwargs,
             localize=localize,
-            concatenate=True,
             dtype=dtype,
-            new_axes=new_axes,
-            meta=meta,
-            align_arrays=False,
+            meta=data._meta,
         )
 
-    return _interpnd(var, x, new_x, func, kwargs)
+        out_ind = list(range(nconst)) + list(range(ndim, ndim + dest_ndim))
+
+        # TODO: assert min chunksize is depth
+        INTERP_OVERLAP_DEPTHS = {
+            # overlap depths for interpolation methods that are "local"
+            # one issue is the endpoint behaviour
+            # https://blogs.mathworks.com/cleve/2019/04/29/makima-piecewise-cubic-interpolation/
+            "linear": 1,
+            "nearest": 1,
+            "slinear": 1,
+            "pchip": 2,
+            # TODO: akima, makima are disabled on the xarray side
+            # "akima": 2,
+            # "makima": 2,
+            # TODO: These splines should be piecewise, but I think the end-point handling can
+            #       mess up the allclose comparison
+            # "cubic": 5,
+            # "quintic": 5,
+        }
+        # core dimensions
+        axis = range(nconst, ndim)
+
+        # With advanced interpolation, we are taking a 1D x and interp-ing
+        # to a nD x. The only way to do this is general is to ravel out the
+        # destination coordinates, and then reshape back to the correct order
+        flat_new_x = [_.data.ravel() for _ in broadcast_new_x]
+
+        # these are the chunks that are needed to construct the output
+        # TODO: what happens when a point overlaps with the grid?
+        # Note that every other method has to be applied blockwise
+        if method in INTERP_OVERLAP_DEPTHS:
+            depth = INTERP_OVERLAP_DEPTHS[method]
+            result = _chunked_vectorized_interp_helper(
+                partial(_chunked_aware_interpnd, interp_func=func),
+                data,
+                x=x,
+                new_x=flat_new_x,
+                axis=axis,
+                depth=depth,
+                blockwise_kwargs=blockwise_kwargs,
+            )
+            new_shape = data.shape[: -len(x)] + new_x[0].shape
+            result = result.reshape(new_shape)
+        else:
+            # blockwise args format
+            x_arginds = [[_x, (nconst + index,)] for index, _x in enumerate(x)]
+            x_arginds = [item for pair in x_arginds for item in pair]
+            new_x_arginds = [
+                [_x, [ndim + index for index in range(_x.ndim)]] for _x in new_x
+            ]
+            new_x_arginds = [item for pair in new_x_arginds for item in pair]
+
+            args = (var, list(range(ndim)), *x_arginds, *new_x_arginds)
+
+            _, rechunked = chunkmanager.unify_chunks(*args)
+
+            args = tuple(
+                elem
+                for pair in zip(rechunked, args[1::2], strict=True)
+                for elem in pair
+            )
+
+            new_x = rechunked[1 + (len(rechunked) - 1) // 2 :]
+
+            new_x0_chunks = new_x[0].chunks
+            new_x0_shape = new_x[0].shape
+            new_axes = {
+                ndim + i: new_x0_chunks[i]
+                if new_x0_chunks is not None
+                else new_x0_shape[i]
+                for i in range(new_x[0].ndim)
+            }
+
+            result = chunkmanager.blockwise(
+                _chunked_aware_interpnd,
+                out_ind,
+                *args,
+                concatenate=True,
+                new_axes=new_axes,
+                align_arrays=False,
+                interp_func=func,
+                **blockwise_kwargs,
+            )
+    else:
+        result = _interpnd(data, x, broadcast_new_x, func, kwargs)
+
+    return Variable(new_dims, result, attrs=var.attrs, fastpath=True)
 
 
 def _interp1d(var, x, new_x, func, kwargs):

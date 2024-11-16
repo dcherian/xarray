@@ -171,6 +171,12 @@ class DaskManager(ChunkManagerEntrypoint["DaskArray"]):
             **kwargs,
         )  # type: ignore[no-untyped-call]
 
+    # TODO: fix signature
+    def overlap(self, *args, **kwargs) -> Any:
+        from dask.array.overlap import overlap
+
+        return overlap(*args, **kwargs)
+
     def map_blocks(
         self,
         func: Callable[..., Any],

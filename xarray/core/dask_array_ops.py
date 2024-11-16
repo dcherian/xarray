@@ -2,7 +2,35 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from xarray.core import dtypes, nputils
+
+
+def subset_to_blocks(
+    data,
+    *,
+    coords: tuple[tuple[int]],
+    new_chunks: tuple[int] = (1, 1),
+    token="",
+):
+    from dask.array import Array
+    from dask.base import tokenize
+    from dask.highlevelgraph import HighLevelGraph
+
+    token = f"{token + '-' if token else token}vinterp-subset-{tokenize(data, *coords)}"
+    keys = data._key_array[..., *coords, :]
+    graph = {}
+    for flatidx, idx in enumerate(np.ndindex(keys.shape[:-1])):
+        graph[(token, *idx[:-1], flatidx)] = tuple(keys[*idx, :])
+
+    ndim = len(coords)
+    return Array(
+        HighLevelGraph.from_collections(token, graph, dependencies=[data]),
+        token,
+        chunks=(*data._chunks[:-ndim], new_chunks),
+        meta=data,
+    )
 
 
 def dask_rolling_wrapper(moving_func, a, window, min_count=None, axis=-1):
