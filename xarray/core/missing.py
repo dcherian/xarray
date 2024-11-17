@@ -675,6 +675,7 @@ def _chunked_vectorized_interp_helper(
     new_x: tuple[np.ndarray, ...],
     axis: tuple[int, ...],
     depth: int,
+    out_chunks: tuple[int, ...],
     blockwise_kwargs: Mapping[Any, Any],
 ):
     """
@@ -707,12 +708,19 @@ def _chunked_vectorized_interp_helper(
     ------
     dask.array.Array
     """
-    import dask
     import toolz as tlz
 
     from xarray.core.dask_array_ops import subset_to_blocks
 
-    assert all(new_coord.ndim == 1 for new_coord in new_x)
+    # Assumption: We are always interping from a 1D coordinate X
+    # to potential nD coordinats new_X
+    assert all(coord.ndim == 1 for coord in x)
+
+    # With advanced interpolation, we are taking a 1D x and interp-ing
+    # to a nD new_x. The only way to do this is general is to ravel out the
+    # destination coordinates, and then reshape back to the correct order
+    flat_new_x = [_.ravel() for _ in new_x]
+    out_shape = data.shape[: -len(x)] + new_x[0].shape
 
     chunksizes = tuple(data.chunks[ax] for ax in axis)
 
@@ -731,17 +739,13 @@ def _chunked_vectorized_interp_helper(
         overlapper(chunkmanager.from_array(coord, chunks=chunks), depth={0: depth})
         for ax, (coord, chunks) in enumerate(zip(x, chunksizes, strict=True))
     )
-    needed_chunks = tuple(
-        zip(
-            *(
-                tuple(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
-                for ax, desired, coord, chunks in zip(
-                    axis, new_x, x, chunksizes, strict=True
-                )
-            ),
-            strict=True,
+    digitized = tuple(
+        tuple(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
+        for ax, desired, coord, chunks in zip(
+            axis, flat_new_x, x, chunksizes, strict=True
         )
     )
+    needed_chunks = tuple(zip(*(digitized), strict=True))
 
     # maps a block index to indices of the desired points in that block
     grouped = tlz.groupby(
@@ -797,7 +801,7 @@ def _chunked_vectorized_interp_helper(
                     chunkmanager.from_array(
                         points_single_axis[argsorter], desired_chunks
                     )
-                    for points_single_axis in new_x
+                    for points_single_axis in flat_new_x
                 ),
                 (new_axis,),
                 fillvalue=new_axis,
@@ -805,14 +809,32 @@ def _chunked_vectorized_interp_helper(
         ),
         concatenate=False,
         # TODO: FIX THIS
-        adjust_chunks={1: desired_chunks},
+        adjust_chunks={out_axis[-1]: desired_chunks},
         # This is important, it stops all broadcasting.
         align_arrays=False,
         **blockwise_kwargs,
     )
+
+    from dask.array import reshape_blockwise, take
+    from dask.array.core import slices_from_chunks
+
+    ndim = len(x)
+    slices = slices_from_chunks(data.chunks[-ndim:])
     # argsort back to the original order of points
-    result = dask.array.take(result, indices=invert_argsorter, axis=-1)
-    return result
+    # if chunking along the interped output dimensions is desired, we add one element of cleverness
+    if out_chunks is not None:
+        # permute the indices so that we can reshape to the desired chunking in a blockwise fashion.
+        take_indices = np.concatenate(
+            [invert_argsorter.reshape(out_shape)[slc].ravel() for slc in slices]
+        )
+        return reshape_blockwise(
+            take(result, indices=take_indices, axis=-1),
+            shape=out_shape,
+            chunks=out_chunks,
+        )
+    else:
+        # TODO: rechunk to a single block along axis=-1 first?
+        return reshape(take(result, invert_argsorter, axis=-1), shape=out_shape)
 
 
 def interp_func(
@@ -894,7 +916,8 @@ def interp_func(
             "linear": 1,
             "nearest": 1,
             "slinear": 1,
-            "pchip": 2,
+            # TODO: pchip is ok but doesn't get decomposed
+            # "pchip": 2,
             # TODO: akima, makima are disabled on the xarray side
             # "akima": 2,
             # "makima": 2,
@@ -906,11 +929,6 @@ def interp_func(
         # core dimensions
         axis = range(nconst, ndim)
 
-        # With advanced interpolation, we are taking a 1D x and interp-ing
-        # to a nD x. The only way to do this is general is to ravel out the
-        # destination coordinates, and then reshape back to the correct order
-        flat_new_x = [_.data.ravel() for _ in broadcast_new_x]
-
         # these are the chunks that are needed to construct the output
         # TODO: what happens when a point overlaps with the grid?
         # Note that every other method has to be applied blockwise
@@ -919,14 +937,13 @@ def interp_func(
             result = _chunked_vectorized_interp_helper(
                 partial(_chunked_aware_interpnd, interp_func=func),
                 data,
-                x=x,
-                new_x=flat_new_x,
+                x=tuple(_.data for _ in x),
+                new_x=tuple(_.data for _ in new_x),
                 axis=axis,
                 depth=depth,
+                out_chunks=None,  # TODO: wire this up
                 blockwise_kwargs=blockwise_kwargs,
             )
-            new_shape = data.shape[: -len(x)] + new_x[0].shape
-            result = result.reshape(new_shape)
         else:
             # blockwise args format
             x_arginds = [[_x, (nconst + index,)] for index, _x in enumerate(x)]

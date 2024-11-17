@@ -21,9 +21,10 @@ def subset_to_blocks(
     token = f"{token + '-' if token else token}vinterp-subset-{tokenize(data, *coords)}"
     keys = data._key_array[..., *coords, :]
     graph = {}
+    # number of blocks we will pull from the coords axis
+    size = math.prod(keys.shape[:-1][-len(coords) :])
     for flatidx, idx in enumerate(np.ndindex(keys.shape[:-1])):
-        graph[(token, *idx[:-1], flatidx)] = tuple(keys[*idx, :])
-
+        graph[(token, *idx[: -len(coords)], flatidx % size)] = tuple(keys[*idx, :])
     ndim = len(coords)
     return Array(
         HighLevelGraph.from_collections(token, graph, dependencies=[data]),

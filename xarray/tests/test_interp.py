@@ -114,18 +114,27 @@ def test_keywargs():
     assert_equal(da.interp(x=[0.5, 0.8]), da.interp({"x": [0.5, 0.8]}))
 
 
+# TODO: extra chunking
+@requires_scipy
 @pytest.mark.parametrize("method", ["linear", "cubic"])
 @pytest.mark.parametrize("dim", ["x", "y"])
 @pytest.mark.parametrize(
-    "case", [pytest.param(0, id="no_chunk"), pytest.param(1, id="chunk_y")]
+    "case",
+    [
+        pytest.param(0, id="no_chunk"),
+        pytest.param(
+            1,
+            id="chunk_y",
+            marks=pytest.mark.skipif(not has_dask, reason="requires dask"),
+        ),
+        pytest.param(
+            2,
+            id="chunk_xy",
+            marks=pytest.mark.skipif(not has_dask, reason="requires dask"),
+        ),
+    ],
 )
 def test_interpolate_1d(method: InterpOptions, dim: str, case: int) -> None:
-    if not has_scipy:
-        pytest.skip("scipy is not installed.")
-
-    if not has_dask and case in [1]:
-        pytest.skip("dask is not installed in the environment.")
-
     da = get_example_data(case)
     xdest = np.linspace(0.0, 0.9, 80)
     actual = da.interp(method=method, coords={dim: xdest})
@@ -292,12 +301,17 @@ def test_interpolate_vectorize(use_dask: bool, method: InterpOptions) -> None:
 @requires_scipy
 @pytest.mark.parametrize("method", get_args(InterpnOptions))
 @pytest.mark.parametrize(
-    "case", [pytest.param(3, id="no_chunk"), pytest.param(4, id="chunked")]
+    "case",
+    [
+        pytest.param(3, id="no_chunk"),
+        pytest.param(
+            4,
+            id="chunked",
+            marks=pytest.mark.skipif(not has_dask, reason="requires dask"),
+        ),
+    ],
 )
 def test_interpolate_nd(case: int, method: InterpnOptions, nd_interp_coords) -> None:
-    if not has_dask and case == 4:
-        pytest.skip("dask is not installed in the environment.")
-
     da = get_example_data(case)
 
     # grid -> grid
