@@ -739,6 +739,9 @@ def _chunked_vectorized_interp_helper(
         overlapper(chunkmanager.from_array(coord, chunks=chunks), depth={0: depth})
         for ax, (coord, chunks) in enumerate(zip(x, chunksizes, strict=True))
     )
+
+    # these are the chunks that are needed to construct the output
+    # TODO: what happens when a point overlaps with the grid?
     digitized = tuple(
         tuple(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
         for ax, desired, coord, chunks in zip(
@@ -906,8 +909,6 @@ def interp_func(
             meta=data._meta,
         )
 
-        out_ind = list(range(nconst)) + list(range(ndim, ndim + dest_ndim))
-
         # TODO: assert min chunksize is depth
         INTERP_OVERLAP_DEPTHS = {
             # overlap depths for interpolation methods that are "local"
@@ -929,61 +930,21 @@ def interp_func(
         # core dimensions
         axis = range(nconst, ndim)
 
-        # these are the chunks that are needed to construct the output
-        # TODO: what happens when a point overlaps with the grid?
-        # Note that every other method has to be applied blockwise
-        if method in INTERP_OVERLAP_DEPTHS:
-            depth = INTERP_OVERLAP_DEPTHS[method]
-            result = _chunked_vectorized_interp_helper(
-                partial(_chunked_aware_interpnd, interp_func=func),
-                data,
-                x=tuple(_.data for _ in x),
-                new_x=tuple(_.data for _ in new_x),
-                axis=axis,
-                depth=depth,
-                out_chunks=None,  # TODO: wire this up
-                blockwise_kwargs=blockwise_kwargs,
-            )
-        else:
-            # blockwise args format
-            x_arginds = [[_x, (nconst + index,)] for index, _x in enumerate(x)]
-            x_arginds = [item for pair in x_arginds for item in pair]
-            new_x_arginds = [
-                [_x, [ndim + index for index in range(_x.ndim)]] for _x in new_x
-            ]
-            new_x_arginds = [item for pair in new_x_arginds for item in pair]
+        # Every other method has to be applied blockwise
+        if method not in INTERP_OVERLAP_DEPTHS:
+            data = chunkmanager.rechunk(data, dict.fromkeys(range(-len(x), 0), -1))
 
-            args = (var, list(range(ndim)), *x_arginds, *new_x_arginds)
-
-            _, rechunked = chunkmanager.unify_chunks(*args)
-
-            args = tuple(
-                elem
-                for pair in zip(rechunked, args[1::2], strict=True)
-                for elem in pair
-            )
-
-            new_x = rechunked[1 + (len(rechunked) - 1) // 2 :]
-
-            new_x0_chunks = new_x[0].chunks
-            new_x0_shape = new_x[0].shape
-            new_axes = {
-                ndim + i: new_x0_chunks[i]
-                if new_x0_chunks is not None
-                else new_x0_shape[i]
-                for i in range(new_x[0].ndim)
-            }
-
-            result = chunkmanager.blockwise(
-                _chunked_aware_interpnd,
-                out_ind,
-                *args,
-                concatenate=True,
-                new_axes=new_axes,
-                align_arrays=False,
-                interp_func=func,
-                **blockwise_kwargs,
-            )
+        depth = INTERP_OVERLAP_DEPTHS.get(method)
+        result = _chunked_vectorized_interp_helper(
+            partial(_chunked_aware_interpnd, interp_func=func),
+            data,
+            x=tuple(_.data for _ in x),
+            new_x=tuple(_.data for _ in new_x),
+            axis=axis,
+            depth=depth,
+            out_chunks=None,  # TODO: wire this up
+            blockwise_kwargs=blockwise_kwargs,
+        )
     else:
         result = _interpnd(data, x, broadcast_new_x, func, kwargs)
 
