@@ -3161,6 +3161,81 @@ class TestSeasonGrouperAndResampler:
             (10, 11),
         )
 
+    def test_season_grouper_raises_error_if_months_are_not_valid_or_not_continuous(
+        self,
+    ):
+        calendar = "standard"
+        time = date_range("2001-01-01", "2002-12-30", freq="D", calendar=calendar)
+        da = DataArray(np.ones(time.size), dims="time", coords={"time": time})
+
+        with pytest.raises(KeyError, match="IN"):
+            da.resample(time=SeasonResampler(["INVALID_SEASON"]))
+
+        with pytest.raises(KeyError, match="MD"):
+            da.resample(time=SeasonResampler(["MDF"]))
+
+    @pytest.mark.parametrize("calendar", _ALL_CALENDARS)
+    def test_season_grouper_with_seasons_spanning_calendar_year_uses_previous_year(
+        self, calendar
+    ):
+        time = cftime_range("2001-01-01", "2002-12-30", freq="MS", calendar=calendar)
+        data = np.array(
+            [
+                1.0,
+                1.25,
+                1.5,
+                1.75,
+                2.0,
+                1.1,
+                1.35,
+                1.6,
+                1.85,
+                1.2,
+                1.45,
+                1.7,
+                1.95,
+                1.05,
+                1.3,
+                1.55,
+                1.8,
+                1.15,
+                1.4,
+                1.65,
+                1.9,
+                1.25,
+                1.5,
+                1.75,
+            ]
+        )
+        da = DataArray(data, dims="time", coords={"time": time})
+        da["year"] = da.time.dt.year
+
+        actual = da.groupby(
+            year=UniqueGrouper(), time=SeasonGrouper(["NDJFM", "AMJ"])
+        ).mean()
+
+        # Expected if the previous "ND" is used for seasonal grouping
+        expected = xr.DataArray(
+            data=np.array([[1.25, 1.616667], [1.49, 1.5], [1.625]]),
+            dims=["year", "season"],
+            coords={"year": [2001, 2002, 2003], "season": ["NDJFM", "AMJ"]},
+        )
+
+        # Expected if the same year "ND" is used for seasonal grouping
+        # expected = xr.DataArray(
+        #     data=np.array([[1.38, 1.616667], [1.51, 1.5]]),
+        #     dims=["year", "season"],
+        #     coords={
+        #         "year": [
+        #             2001,
+        #             2002,
+        #         ],
+        #         "season": ["NDJFM", "AMJ"],
+        #     },
+        # )
+
+        assert_allclose(expected, actual)
+
     @pytest.mark.parametrize("calendar", _ALL_CALENDARS)
     def test_season_grouper_simple(self, calendar) -> None:
         time = date_range("2001-01-01", "2002-12-30", freq="D", calendar=calendar)
