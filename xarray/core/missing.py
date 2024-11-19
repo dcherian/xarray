@@ -24,7 +24,11 @@ from xarray.core.nputils import inverse_permutation
 from xarray.core.options import _get_keep_attrs
 from xarray.core.types import Interp1dOptions, InterpnOptions, InterpOptions
 from xarray.core.utils import OrderedSet, is_scalar
-from xarray.core.variable import Variable, broadcast_variables
+from xarray.core.variable import (
+    Variable,
+    broadcast_variables,
+    _broadcast_compat_variables,
+)
 from xarray.namedarray.parallelcompat import get_chunked_array_type
 from xarray.namedarray.pycompat import is_chunked_array
 
@@ -584,7 +588,9 @@ def _localize(var, indexes_coords):
     return var.isel(**indexes), indexes_coords
 
 
-def _floatize_x(x, new_x):
+def _floatize_x(
+    x: tuple[Variable, ...], new_x: tuple[Variable, ...]
+) -> tuple[tuple[Variable, ...], tuple[Variable, ...]]:
     """Make x and new_x float.
     This is particularly useful for datetime dtype.
     x, new_x: tuple of np.ndarray
@@ -842,8 +848,8 @@ def _chunked_vectorized_interp_helper(
 
 def interp_func(
     var: Variable,
-    x: tuple[Variable],
-    new_x: tuple[Variable],
+    x: tuple[Variable, ...],
+    new_x: tuple[Variable, ...],
     *,
     varname="data",
     method: InterpOptions,
@@ -882,7 +888,13 @@ def interp_func(
     else:
         func, kwargs = _get_interpolator_nd(method, **kwargs)
 
-    broadcast_new_x = broadcast_variables(*new_x)
+    # This adds any necessary broadcast dimensions with size-1.
+    # This is useful for the dask code-path where we have to determine
+    # which blocks are necessary. With outer or orthogonal interpolation
+    # that determination can become quite expensive if we broadcast to the full shape.
+    # We compensate for this in `_interpnd` where we redo the broadcasting to full size
+    # as is required by the scipy interpolators.
+    broadcast_new_x = _broadcast_compat_variables(*new_x)
     new_dims = var.dims[: -len(x)] + tuple(broadcast_new_x[0].dims)
 
     if is_chunked_array(data):
@@ -890,7 +902,6 @@ def interp_func(
 
         ndim = var.ndim
         nconst = ndim - len(x)
-        dest_ndim = broadcast_new_x[0].ndim
 
         # if useful, reuse localize for each chunk of new_x
         localize = method in ["linear", "nearest"]
@@ -941,7 +952,7 @@ def interp_func(
             partial(_chunked_aware_interpnd, interp_func=func),
             data,
             x=tuple(_.data for _ in x),
-            new_x=tuple(_.data for _ in new_x),
+            new_x=tuple(_.data for _ in broadcast_new_x),
             axis=axis,
             depth=depth,
             out_chunks=None,  # TODO: wire this up
@@ -964,8 +975,17 @@ def _interp1d(var, x, new_x, func, kwargs):
     return rslt
 
 
-def _interpnd(var, x, new_x, func, kwargs):
+def _interpnd(
+    var: Variable,
+    x: tuple[Variable, ...],
+    new_x: tuple[Variable, ...],
+    func: Callable[[np.ndarray], ...],
+    kwargs,
+) -> np.ndarray:
     x, new_x = _floatize_x(x, new_x)
+
+    # switch from size-1 broadcasting to full-size broadcasting
+    new_x = broadcast_variables(*(x.squeeze() for x in new_x))
 
     if len(x) == 1:
         return _interp1d(var, x, new_x, func, kwargs)

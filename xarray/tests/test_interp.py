@@ -371,7 +371,7 @@ def test_interpolate_nd(case: int, method: InterpnOptions, nd_interp_coords) -> 
     actual = da.interp(y=ydest, x=xdest, z=zdest, method=method)
     assert_allclose(actual.transpose("y", "z"), expected)
 
-
+# TODO: daskify this test
 @requires_scipy
 # omit cubic, pchip, quintic because not enough points
 @pytest.mark.parametrize("method", ("linear", "nearest", "slinear"))
@@ -381,7 +381,7 @@ def test_interpolate_nd_nd(method: InterpnOptions) -> None:
     a = [0, 2]
     x = [0, 1, 2]
     values = np.arange(6).reshape(2, 3)
-    da = xr.DataArray(values, dims=("a", "x"), coords={"a": a, "x": x})
+    da = xr.DataArray(values, dims=("a", "x"), coords={"a": a, "x": x}).chunk(x=-1)
 
     # Create indexer into `a` with dimensions (y, x)
     y = [10]

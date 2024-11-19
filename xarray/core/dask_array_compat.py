@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+import itertools
 from functools import partial
 from itertools import chain, zip_longest
 from typing import Any
@@ -90,12 +91,6 @@ def interp_helper(
     # to potential nD coordinats new_X
     assert all(coord.ndim == 1 for coord in x)
 
-    # With advanced interpolation, we are taking a 1D x and interp-ing
-    # to a nD new_x. The only way to do this is general is to ravel out the
-    # destination coordinates, and then reshape back to the correct order
-    flat_new_x = [_.ravel() for _ in new_x]
-    out_shape = data.shape[: -len(x)] + new_x[0].shape
-
     chunksizes = tuple(data.chunks[ax] for ax in axis)
 
     if all(len(_) == 1 for _ in chunksizes):
@@ -115,22 +110,41 @@ def interp_helper(
     # these are the chunks that are needed to construct the output
     # TODO: what happens when a point overlaps with the grid?
     digitized = tuple(
-        tuple(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
-        for ax, desired, coord, chunks in zip(
-            axis, flat_new_x, x, chunksizes, strict=True
-        )
+        np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]])
+        for ax, desired, coord, chunks in zip(axis, new_x, x, chunksizes, strict=True)
     )
-    needed_chunks = tuple(zip(*(digitized), strict=True))
+
+    is_orthogonal = tuple(sum(_ > 1 for _ in x.shape) for x in new_x) == (1,) * len(new_x)
+    out_shape =  data.shape[: -len(x)]
+    # now find all the blocks needed to construct the output
+    if is_orthogonal:
+        needed_chunks = itertools.product(map(np.unique, digitized))
+        out_shape += np.broadcast_shapes(*(_.shape for _ in new_x))
+
+    else:
+        needed_chunks = zip(*digitized, strict=True)
+        out_shape += new_x[0].shape
+
+        # With advanced interpolation, we are taking a 1D x and interp-ing
+        # to a nD new_x. The only way to do this is general is to ravel out the
+        # destination coordinates, and then reshape back to the correct order
+        flat_new_x = [_.ravel() for _ in new_x]
+
+    # blockshape = data.numblocks[-len(x) :]
+    # needed_chunks = np.unravel_index(
+    #     pd.unique(np.ravel_multi_index(digitized, blockshape).ravel()), blockshape
+    # )
 
     # maps a block index to indices of the desired points in that block
     grouped = tlz.groupby(
-        key=lambda x: tuple(map(int, x[1])), seq=enumerate(needed_chunks)
+        key=lambda x: tuple(map(int, x[1])), seq=enumerate(needed_chunks),
     )
     blocks_to_idx = {
         block_id: tuple(_[0] for _ in vals) for block_id, vals in grouped.items()
     }
     desired_chunks = tuple(len(a) for a in blocks_to_idx.values())
 
+    import ipdb; ipdb.set_trace()
     # subset to needed blocks only
     subset = subset_to_blocks(
         overlapped,
@@ -174,7 +188,7 @@ def interp_helper(
             *zip_longest(
                 (
                     from_array(points_single_axis[argsorter], desired_chunks)
-                    for points_single_axis in flat_new_x
+                    for points_single_axis in new_x
                 ),
                 (new_axis,),
                 fillvalue=new_axis,
