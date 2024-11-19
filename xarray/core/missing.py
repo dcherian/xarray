@@ -935,7 +935,9 @@ def interp_func(
             data = chunkmanager.rechunk(data, dict.fromkeys(range(-len(x), 0), -1))
 
         depth = INTERP_OVERLAP_DEPTHS.get(method)
-        result = _chunked_vectorized_interp_helper(
+        from xarray.core.dask_array_compat import interp_helper
+
+        result = interp_helper(
             partial(_chunked_aware_interpnd, interp_func=func),
             data,
             x=tuple(_.data for _ in x),
