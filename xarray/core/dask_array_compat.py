@@ -133,23 +133,10 @@ def interp_helper(
     # destination coordinates, and then reshape back to the correct order
     # `out_shape` (calculated later) is the shape we reshape back to.
     flat_new_x = [_.ravel() if np.ndim(_) != 0 else _ for _ in new_x]
-    # flat_new_x = [_.ravel() for _ in new_x]
-
-    # these are the chunks that are needed to construct the output
-    # TODO: what happens when a point overlaps with the grid?
-    # TODO: this call to digitize, labels each output point with
-    # input chunk. This is a potential extension point for interping from
-    # source nD coordinates
-    digitized = tuple(
-        np.atleast_1d(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
-        for ax, desired, coord, chunks in zip(
-            axis, flat_new_x, x, chunksizes, strict=True
-        )
-    )
 
     # TODO: what if len(x) is 1?
     is_orthogonal = not (
-        np.broadcast_shapes(*(_.shape for _ in new_x)) == flat_new_x[0].shape
+        np.broadcast_shapes(*(_.shape for _ in new_x)) == new_x[0].shape
     )
     ndim = len(x)
     out_shape = data.shape[:-ndim]
@@ -160,6 +147,16 @@ def interp_helper(
     if is_orthogonal:
         loop_dim_chunks = itertools.product(
             *(range(len(chunks)) for chunks in data.chunks[:-ndim])
+        )
+        # these are the chunks that are needed to construct the output
+        # TODO: this call to digitize, labels each output point with
+        # input chunk. This is a potential extension point for interping from
+        # source nD coordinates
+        digitized = tuple(
+            np.atleast_1d(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
+            for ax, desired, coord, chunks in zip(
+                axis, new_x, x, chunksizes, strict=True
+            )
         )
         unique_chunks = tuple(map(np.unique, digitized))
         needed_chunks = tuple(itertools.product(*unique_chunks))
@@ -195,7 +192,7 @@ def interp_helper(
                     for (ax, out_chunk, out_coord, current_chunk) in zip(
                         range(ndim),
                         digitized,
-                        flat_new_x,
+                        new_x,  # no need for raveled here
                         input_core_dim_chunk_coord,
                         strict=True,
                     )
@@ -222,6 +219,16 @@ def interp_helper(
         # )
 
     else:
+        # these are the chunks that are needed to construct the output
+        # TODO: this call to digitize, labels each output point with
+        # input chunk. This is a potential extension point for interping from
+        # source nD coordinates
+        digitized = tuple(
+            np.atleast_1d(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
+            for ax, desired, coord, chunks in zip(
+                axis, flat_new_x, x, chunksizes, strict=True
+            )
+        )
         needed_chunks = tuple(zip(*digitized, strict=True))
         out_shape += new_x[0].shape
 
@@ -263,7 +270,10 @@ def interp_helper(
                     )
                 ),
                 # output coordinates that can be constructed from this input block
-                *(np.take(out_coord, indices=indices, axis=0) for out_coord in new_x),
+                *(
+                    np.take(out_coord, indices=indices, axis=0)
+                    for out_coord in flat_new_x
+                ),
             )
 
     graph = HighLevelGraph.from_collections(
