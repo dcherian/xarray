@@ -305,5 +305,5 @@ def interp_helper(
         )
     else:
         for ax, idxr in enumerate(invert_argsorter):
-            result = take(result, idxr, axis=-1 - ax)
+            result = take(result, idxr, axis=-len(invert_argsorter) + ax)
         return reshape(result, shape=out_shape)
