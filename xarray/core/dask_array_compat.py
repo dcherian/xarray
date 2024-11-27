@@ -87,6 +87,7 @@ def interp_helper(
     from dask.array.core import slices_from_chunks
     from dask.array.overlap import overlap
     from dask.array.routines import take
+    from dask.base import tokenize
     from dask.highlevelgraph import HighLevelGraph
 
     def _take(array: np.ndarray, *, mask: np.ndarray, axis: int) -> np.ndarray:
@@ -152,7 +153,7 @@ def interp_helper(
     )
     ndim = len(x)
     out_shape = data.shape[:-ndim]
-    token = "foo-interp-"
+    token = "interp-" + tokenize(data, *x, *new_x)
     blockwise_func = partial(func, **blockwise_kwargs)
 
     # now find all the blocks needed to construct the output
@@ -249,7 +250,8 @@ def interp_helper(
             input_block = tuple(keys[*idx, :])
             input_core_dim_chunk_coord = input_block[-ndim:]
             indices = blocks_to_idx[input_core_dim_chunk_coord]
-            layer[(token, *loop_dim_chunk_coord, out_core_dim_chunk_coord)] = (
+            output_block = (token, *loop_dim_chunk_coord, out_core_dim_chunk_coord)
+            layer[output_block] = (
                 blockwise_func,
                 # block to interpolate
                 input_block,
