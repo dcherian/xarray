@@ -990,8 +990,15 @@ def _interpnd(
 
     # move the interpolation axes to the start position
     var = var.transpose(range(-len(x), var.ndim - len(x)))
+
+    # `new_x` contains broadcast-compatible Variables with size-1 dimensions
+    # in the case of outer interpolation across multiple dimensions. So use
+    # `broadcast_arrays` to do the broadcasting. We do not have a method that handles
+    # broadcasting along existing size-1 dimensions.
+    new_x = np.broadcast_arrays(*new_x)
+
     # stack new_x to 1 vector, with reshape
-    xi = np.stack([x1.values.ravel() for x1 in new_x], axis=-1)
+    xi = np.stack([x1.ravel() for x1 in new_x], axis=-1)
     rslt = func(x, var, xi, **kwargs)
     # move back the interpolation axes to the last position
     rslt = rslt.transpose(range(-rslt.ndim + 1, 1))

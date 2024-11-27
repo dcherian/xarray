@@ -117,22 +117,33 @@ def interp_helper(
         for ax, (coord, chunks) in enumerate(zip(x, chunksizes, strict=True))
     )
 
+    # With advanced interpolation, we are taking a 1D x and interp-ing
+    # to a nD new_x. The only way to do this is general is to ravel out the
+    # destination coordinates, and then reshape back to the correct order
+    # `out_shape` (calculated later) is the shape we reshape back to.
+    flat_new_x = [_.ravel() for _ in new_x]
+
     # these are the chunks that are needed to construct the output
     # TODO: what happens when a point overlaps with the grid?
+    # TODO: this call to digitize, labels each output point with
+    # input chunk. This is a potential extension point for interping from
+    # source nD coordinates
     digitized = tuple(
         np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]])
-        for ax, desired, coord, chunks in zip(axis, new_x, x, chunksizes, strict=True)
+        for ax, desired, coord, chunks in zip(
+            axis, flat_new_x, x, chunksizes, strict=True
+        )
     )
 
     # TODO: what if len(x) is 1?
     is_orthogonal = not (
-        np.broadcast_shapes(*(_.shape for _ in new_x)) == new_x[0].shape
+        np.broadcast_shapes(*(_.shape for _ in new_x)) == flat_new_x[0].shape
     )
     ndim = len(x)
     out_shape = data.shape[:-ndim]
     token = "foo-interp-"
     blockwise_func = partial(func, **blockwise_kwargs)
-    import ipdb; ipdb.set_trace()
+
     # now find all the blocks needed to construct the output
     if is_orthogonal:
         loop_dim_chunks = itertools.product(
@@ -144,7 +155,7 @@ def interp_helper(
         # We are sending the desired output coordinate locations to the appropriate
         # block of the input. After interpolation we must argsort back to the correct order
         # This `argsorter` is only needed for calculating the "inverse" argsort indices: `invert_argsorter`
-        argsorter = tuple(np.argsort(_.squeeze()) for _ in new_x)
+        argsorter = tuple(np.argsort(_.squeeze()) for _ in flat_new_x)
 
         layer = {}
         for loop_dim_chunk_coord, (
@@ -172,7 +183,7 @@ def interp_helper(
                     for (ax, out_chunk, out_coord, current_chunk) in zip(
                         range(ndim),
                         digitized,
-                        new_x,
+                        flat_new_x,
                         input_core_dim_chunk_coord,
                         strict=True,
                     )
@@ -190,10 +201,6 @@ def interp_helper(
         needed_chunks = tuple(zip(*digitized, strict=True))
         out_shape += new_x[0].shape
 
-        # With advanced interpolation, we are taking a 1D x and interp-ing
-        # to a nD new_x. The only way to do this is general is to ravel out the
-        # destination coordinates, and then reshape back to the correct order
-        # flat_new_x = [_.ravel() for _ in new_x]
         # maps a block index to indices of the desired points in that block
         grouped = tlz.groupby(
             key=lambda x: tuple(map(int, x[1])),
