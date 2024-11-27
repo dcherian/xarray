@@ -913,12 +913,7 @@ def interp_func(
         else:
             dtype = var.dtype
 
-        blockwise_kwargs = dict(
-            interp_kwargs=kwargs,
-            localize=localize,
-            dtype=dtype,
-            meta=data._meta,
-        )
+        blockwise_kwargs = dict(interp_kwargs=kwargs, localize=localize)
 
         # TODO: assert min chunksize is depth
         INTERP_OVERLAP_DEPTHS = {
@@ -957,6 +952,8 @@ def interp_func(
             depth=depth,
             out_chunks=None,  # TODO: wire this up
             blockwise_kwargs=blockwise_kwargs,
+            dtype=dtype,
+            meta=data._meta,
         )
     else:
         result = _interpnd(data, x, broadcast_new_x, func, kwargs)
@@ -984,8 +981,9 @@ def _interpnd(
 ) -> np.ndarray:
     x, new_x = _floatize_x(x, new_x)
 
+    # TODO: get rid of indiscriminate squeeze here
     # switch from size-1 broadcasting to full-size broadcasting
-    new_x = broadcast_variables(*(x.squeeze() for x in new_x))
+    # new_x = broadcast_variables(*(x.squeeze() for x in new_x))
 
     if len(x) == 1:
         return _interp1d(var, x, new_x, func, kwargs)

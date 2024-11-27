@@ -1,7 +1,7 @@
-from collections.abc import Callable, Mapping
 import itertools
+import math
+from collections.abc import Callable, Mapping
 from functools import partial
-from itertools import chain, zip_longest
 from typing import Any
 
 import numpy as np
@@ -49,6 +49,8 @@ def interp_helper(
     depth: int,
     out_chunks=None,
     blockwise_kwargs: Mapping[Any, Any],
+    dtype=None,
+    meta=None,
 ):
     """
     Helper function to apply an interpolator ``func`` to blocks of the data.
@@ -81,11 +83,19 @@ def interp_helper(
     dask.array.Array
     """
     import toolz as tlz
-    from dask.array import blockwise, from_array
+    from dask.array import Array, from_array, reshape, reshape_blockwise
+    from dask.array.core import slices_from_chunks
     from dask.array.overlap import overlap
     from dask.array.routines import take
+    from dask.highlevelgraph import HighLevelGraph
 
-    from xarray.core.dask_array_ops import subset_to_blocks
+    def _take(array: np.ndarray, *, mask: np.ndarray, axis: int) -> np.ndarray:
+        """Runs take with indices inferred from a boolean mask. Doing so preserves dimensionality
+        compared to using `__getitem__`."""
+        squeezed = mask.squeeze()
+        assert squeezed.ndim == 1
+        (indices,) = np.nonzero(squeezed)
+        return np.take(array, indices=indices, axis=axis)
 
     # Assumption: We are always interping from a 1D coordinate X
     # to potential nD coordinats new_X
@@ -114,102 +124,134 @@ def interp_helper(
         for ax, desired, coord, chunks in zip(axis, new_x, x, chunksizes, strict=True)
     )
 
-    is_orthogonal = tuple(sum(_ > 1 for _ in x.shape) for x in new_x) == (1,) * len(new_x)
-    out_shape =  data.shape[: -len(x)]
+    # TODO: what if len(x) is 1?
+    is_orthogonal = not (
+        np.broadcast_shapes(*(_.shape for _ in new_x)) == new_x[0].shape
+    )
+    ndim = len(x)
+    out_shape = data.shape[:-ndim]
+    token = "foo-interp-"
+    blockwise_func = partial(func, **blockwise_kwargs)
+    import ipdb; ipdb.set_trace()
     # now find all the blocks needed to construct the output
     if is_orthogonal:
-        needed_chunks = itertools.product(map(np.unique, digitized))
+        loop_dim_chunks = itertools.product(
+            *(range(len(chunks)) for chunks in data.chunks[:-ndim])
+        )
+        unique_chunks = tuple(map(np.unique, digitized))
+        needed_chunks = tuple(itertools.product(*unique_chunks))
         out_shape += np.broadcast_shapes(*(_.shape for _ in new_x))
+        # We are sending the desired output coordinate locations to the appropriate
+        # block of the input. After interpolation we must argsort back to the correct order
+        # This `argsorter` is only needed for calculating the "inverse" argsort indices: `invert_argsorter`
+        argsorter = tuple(np.argsort(_.squeeze()) for _ in new_x)
+
+        layer = {}
+        for loop_dim_chunk_coord, (
+            flat_out_chunk_coord,
+            input_core_dim_chunk_coord,
+        ) in itertools.product(loop_dim_chunks, enumerate(needed_chunks)):
+            out_core_dim_chunk_coord = np.unravel_index(
+                flat_out_chunk_coord, out_shape[-ndim:]
+            )
+            layer[token, *loop_dim_chunk_coord, *out_core_dim_chunk_coord] = (
+                blockwise_func,
+                # block to interpolate
+                (overlapped.name, *loop_dim_chunk_coord, *input_core_dim_chunk_coord),
+                # corresponding input coordinate block
+                *(
+                    (coord.name, chunk_coord)
+                    for coord, chunk_coord in zip(
+                        chunked_grid_coords, input_core_dim_chunk_coord, strict=True
+                    )
+                ),
+                # output coordinates that can be constructed from this input block
+                *(
+                    # TODO: do we need to use the argsorter?
+                    _take(out_coord, mask=out_chunk == current_chunk, axis=ax)
+                    for (ax, out_chunk, out_coord, current_chunk) in zip(
+                        range(ndim),
+                        digitized,
+                        new_x,
+                        input_core_dim_chunk_coord,
+                        strict=True,
+                    )
+                ),
+            )
+
+        desired_chunks = tuple(
+            tuple(
+                len(v) for v in tlz.groupby(lambda x: x, digitized_.squeeze()).values()
+            )
+            for digitized_ in digitized
+        )
 
     else:
-        needed_chunks = zip(*digitized, strict=True)
+        needed_chunks = tuple(zip(*digitized, strict=True))
         out_shape += new_x[0].shape
 
         # With advanced interpolation, we are taking a 1D x and interp-ing
         # to a nD new_x. The only way to do this is general is to ravel out the
         # destination coordinates, and then reshape back to the correct order
-        flat_new_x = [_.ravel() for _ in new_x]
-
-    # blockshape = data.numblocks[-len(x) :]
-    # needed_chunks = np.unravel_index(
-    #     pd.unique(np.ravel_multi_index(digitized, blockshape).ravel()), blockshape
-    # )
-
-    # maps a block index to indices of the desired points in that block
-    grouped = tlz.groupby(
-        key=lambda x: tuple(map(int, x[1])), seq=enumerate(needed_chunks),
-    )
-    blocks_to_idx = {
-        block_id: tuple(_[0] for _ in vals) for block_id, vals in grouped.items()
-    }
-    desired_chunks = tuple(len(a) for a in blocks_to_idx.values())
-
-    import ipdb; ipdb.set_trace()
-    # subset to needed blocks only
-    subset = subset_to_blocks(
-        overlapped,
-        coords=tuple(zip(*blocks_to_idx.keys(), strict=True)),
-        new_chunks=desired_chunks,
-        token="var",
-    )
-
-    grid_block_coords = []
-    for ax, coord in enumerate(chunked_grid_coords):
-        chunkids = [key[ax] for key in blocks_to_idx]
-        grid_block_coords.append(
-            subset_to_blocks(
-                coord,
-                coords=(chunkids,),
-                new_chunks=tuple(chunksizes[ax][i] for i in chunkids),
-                # TODO: more tokenize
-                token=f"interp-ax-{ax}",
-            )
+        # flat_new_x = [_.ravel() for _ in new_x]
+        # maps a block index to indices of the desired points in that block
+        grouped = tlz.groupby(
+            key=lambda x: tuple(map(int, x[1])),
+            seq=enumerate(needed_chunks),
         )
+        blocks_to_idx = {
+            block_id: tuple(_[0] for _ in vals) for block_id, vals in grouped.items()
+        }
+        desired_chunks = (tuple(len(a) for a in blocks_to_idx.values()),)
+        needed_chunk_indexer = tuple(zip(*grouped.keys(), strict=True))
+        # We are sending the desired output coordinate locations to the appropriate
+        # block of the input. After interpolation we must argsort back to the correct order
+        # This `argsorter` is only needed for calculating the "inverse" argsort indices: `invert_argsorter`
+        argsorter = (np.concatenate(list(blocks_to_idx.values())),)
+
+        keys = overlapped._key_array[..., *needed_chunk_indexer, :]
+        layer = {}
+        # number of blocks we will pull from the coords axis
+        size = math.prod(keys.shape[:-1][-ndim:])
+        for flatidx, idx in enumerate(np.ndindex(keys.shape[:-1])):
+            loop_dim_chunk_coord = idx[:-1]
+            out_core_dim_chunk_coord = flatidx % size
+            input_block = tuple(keys[*idx, :])
+            input_core_dim_chunk_coord = input_block[-ndim:]
+            indices = blocks_to_idx[input_core_dim_chunk_coord]
+            layer[(token, *loop_dim_chunk_coord, out_core_dim_chunk_coord)] = (
+                blockwise_func,
+                # block to interpolate
+                input_block,
+                # corresponding input coordinate block
+                *(
+                    (coord.name, chunk_coord)
+                    for coord, chunk_coord in zip(
+                        chunked_grid_coords, input_core_dim_chunk_coord, strict=True
+                    )
+                ),
+                # output coordinates that can be constructed from this input block
+                *(np.take(out_coord, indices=indices, axis=0) for out_coord in new_x),
+            )
+
+    graph = HighLevelGraph.from_collections(
+        token, layer, dependencies=[overlapped, *chunked_grid_coords]
+    )
+    result = Array(
+        graph,
+        token,
+        chunks=data.chunks[:-ndim] + desired_chunks,
+        dtype=np.float64,
+        meta=data._meta,
+    )
+    invert_argsorter = tuple(inverse_permutation(_) for _ in argsorter)
+
     # sort the output points by block-id
     # so that every point in a single block occurs near each other
-    argsorter = np.concatenate(list(blocks_to_idx.values()))
-    invert_argsorter = inverse_permutation(argsorter)
-
-    # The axis indices here are meaningless. I'm faking them to build a purely blockwise graph.
-    # each block is sent to _interp with the appropriate grid coordinates, and the output points to
-    # interpolate to.
-    ndim = len(x)
-    new_axis = (data.ndim - ndim,)
-    out_axis = tuple(range(data.ndim - ndim)) + new_axis
-    result = blockwise(
-        func,
-        out_axis,
-        subset,
-        out_axis,
-        *chain(
-            # input grid coords
-            *zip_longest(grid_block_coords, (new_axis,), fillvalue=new_axis),
-            # output point coords
-            *zip_longest(
-                (
-                    from_array(points_single_axis[argsorter], desired_chunks)
-                    for points_single_axis in new_x
-                ),
-                (new_axis,),
-                fillvalue=new_axis,
-            ),
-        ),
-        concatenate=False,
-        # TODO: FIX THIS
-        adjust_chunks={out_axis[-1]: desired_chunks},
-        # This is important, it stops all broadcasting.
-        align_arrays=False,
-        **blockwise_kwargs,
-    )
-
-    from dask.array import reshape, reshape_blockwise, take
-    from dask.array.core import slices_from_chunks
-
-    ndim = len(x)
-    slices = slices_from_chunks(data.chunks[-ndim:])
     # argsort back to the original order of points
     # if chunking along the interped output dimensions is desired, we add one element of cleverness
     if out_chunks is not None:
+        slices = slices_from_chunks(data.chunks[-ndim:])
         # permute the indices so that we can reshape to the desired chunking in a blockwise fashion.
         take_indices = np.concatenate(
             [invert_argsorter.reshape(out_shape)[slc].ravel() for slc in slices]
@@ -220,5 +262,6 @@ def interp_helper(
             chunks=out_chunks,
         )
     else:
-        # TODO: rechunk to a single block along axis=-1 first?
-        return reshape(take(result, invert_argsorter, axis=-1), shape=out_shape)
+        for ax, idxr in enumerate(invert_argsorter):
+            result = take(result, idxr, axis=-1 - ax)
+        return reshape(result, shape=out_shape)
