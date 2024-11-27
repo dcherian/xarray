@@ -92,14 +92,24 @@ def interp_helper(
     def _take(array: np.ndarray, *, mask: np.ndarray, axis: int) -> np.ndarray:
         """Runs take with indices inferred from a boolean mask. Doing so preserves dimensionality
         compared to using `__getitem__`."""
+        if array.ndim == 0:
+            assert mask.all()
+            return array
+
         squeezed = mask.squeeze()
         assert squeezed.ndim == 1
         (indices,) = np.nonzero(squeezed)
         return np.take(array, indices=indices, axis=axis)
 
     # Assumption: We are always interping from a 1D coordinate X
-    # to potential nD coordinats new_X
+    # to potential nD coordinates new_X
     assert all(coord.ndim == 1 for coord in x)
+    # desired coordinate locations must be of same dimensionality
+    assert all(np.ndim(_) == np.ndim(new_x[0]) for _ in new_x[1:])
+    # check that data are aligned.
+    assert all(
+        size == coord.size for size, coord in zip(data.shape[-len(x) :], x, strict=True)
+    )
 
     chunksizes = tuple(data.chunks[ax] for ax in axis)
 
@@ -121,7 +131,8 @@ def interp_helper(
     # to a nD new_x. The only way to do this is general is to ravel out the
     # destination coordinates, and then reshape back to the correct order
     # `out_shape` (calculated later) is the shape we reshape back to.
-    flat_new_x = [_.ravel() for _ in new_x]
+    flat_new_x = [_.ravel() if np.ndim(_) != 0 else _ for _ in new_x]
+    # flat_new_x = [_.ravel() for _ in new_x]
 
     # these are the chunks that are needed to construct the output
     # TODO: what happens when a point overlaps with the grid?
@@ -129,7 +140,7 @@ def interp_helper(
     # input chunk. This is a potential extension point for interping from
     # source nD coordinates
     digitized = tuple(
-        np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]])
+        np.atleast_1d(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
         for ax, desired, coord, chunks in zip(
             axis, flat_new_x, x, chunksizes, strict=True
         )
@@ -192,10 +203,22 @@ def interp_helper(
 
         desired_chunks = tuple(
             tuple(
-                len(v) for v in tlz.groupby(lambda x: x, digitized_.squeeze()).values()
+                len(v)
+                for v in tlz.groupby(
+                    lambda x: x,
+                    digitized_.squeeze(
+                        axis=tuple(a for a in range(digitized_.ndim) if a != ax)
+                    ),
+                ).values()
             )
-            for digitized_ in digitized
+            if np.ndim(new) != 0
+            else 0
+            for ax, (digitized_, new) in enumerate(zip(digitized, new_x, strict=True))
         )
+        # desired_chunks = tuple(
+        #     len(np.unique(_)) if np.ndim(new) != 0 else 0
+        #     for _, new in zip(digitized, new_x, strict=True)
+        # )
 
     else:
         needed_chunks = tuple(zip(*digitized, strict=True))
