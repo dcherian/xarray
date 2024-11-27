@@ -246,11 +246,11 @@ def interp_helper(
         # block of the input. After interpolation we must argsort back to the correct order
         # This `argsorter` is only needed for calculating the "inverse" argsort indices: `invert_argsorter`
         argsorter = (np.concatenate(list(blocks_to_idx.values())),)
-
+        desired_numblocks = tuple(len(_) for _ in desired_chunks)
         keys = overlapped._key_array[..., *needed_chunk_indexer, :]
         layer = {}
         # number of blocks we will pull from the coords axis
-        size = math.prod(keys.shape[:-1][-ndim:])
+        size = math.prod(desired_numblocks)
         for flatidx, idx in enumerate(np.ndindex(keys.shape[:-1])):
             loop_dim_chunk_coord = idx[:-1]
             out_core_dim_chunk_coord = flatidx % size
