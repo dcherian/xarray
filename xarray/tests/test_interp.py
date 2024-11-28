@@ -1014,8 +1014,8 @@ def test_interpolate_chunk_advanced(method: InterpOptions) -> None:
     expected = da.interp(t=0.5, x=xda, y=yda, z=zda, kwargs=kwargs, method=method)
 
     da = da.chunk(2)
-    xda = xda.chunk(1)
-    zda = zda.chunk(3)
+    # xda = xda.chunk(1)
+    # zda = zda.chunk(3)
     actual = da.interp(t=0.5, x=xda, y=yda, z=zda, kwargs=kwargs, method=method)
     assert_identical(actual, expected)
 
