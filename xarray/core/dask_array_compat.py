@@ -97,7 +97,7 @@ def interp_helper(
             assert mask.all()
             return array
 
-        squeezed = mask.squeeze()
+        squeezed = mask.squeeze() if mask.ndim > 1 else mask
         assert squeezed.ndim == 1
         (indices,) = np.nonzero(squeezed)
         return np.take(array, indices=indices, axis=axis)
