@@ -139,7 +139,7 @@ def interp_helper(
         np.broadcast_shapes(*(_.shape for _ in new_x)) == new_x[0].shape
     )
     ndim = len(x)
-    out_shape = data.shape[:-ndim]
+    out_shape = data.shape[:-ndim] + broadcasted_shape
     token = "interp-" + tokenize(data, *x, *new_x)
     blockwise_func = partial(func, **blockwise_kwargs)
 
@@ -160,7 +160,7 @@ def interp_helper(
         )
         unique_chunks = tuple(map(np.unique, digitized))
         needed_chunks = tuple(itertools.product(*unique_chunks))
-        out_shape += np.broadcast_shapes(*(_.shape for _ in new_x))
+
         # We are sending the desired output coordinate locations to the appropriate
         # block of the input. After interpolation we must argsort back to the correct order
         # This `argsorter` is only needed for calculating the "inverse" argsort indices: `invert_argsorter`
@@ -200,29 +200,19 @@ def interp_helper(
             )
 
         desired_chunks = tuple(
-            tuple(
-                len(v)
-                for v in tlz.groupby(
-                    lambda x: x,
-                    digitized_.squeeze(
-                        axis=tuple(a for a in range(digitized_.ndim) if a != ax)
-                    ),
-                ).values()
-            )
+            tuple(v for v in tlz.frequencies(digitized_.ravel()).values())
             if np.ndim(new) != 0
             else 0
             for ax, (digitized_, new) in enumerate(zip(digitized, new_x, strict=True))
         )
-        # desired_chunks = tuple(
-        #     len(np.unique(_)) if np.ndim(new) != 0 else 0
-        #     for _, new in zip(digitized, new_x, strict=True)
-        # )
 
     else:
         # these are the chunks that are needed to construct the output
         # TODO: this call to digitize, labels each output point with
         # input chunk. This is a potential extension point for interping from
         # source nD coordinates
+        # The broadcast handles input scalars.
+        flat_new_x = np.broadcast_arrays(*flat_new_x)
         digitized = tuple(
             np.atleast_1d(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
             for ax, desired, coord, chunks in zip(
@@ -230,7 +220,6 @@ def interp_helper(
             )
         )
         needed_chunks = tuple(zip(*digitized, strict=True))
-        out_shape += new_x[0].shape
 
         # maps a block index to indices of the desired points in that block
         grouped = tlz.groupby(
