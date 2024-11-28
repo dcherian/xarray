@@ -138,6 +138,7 @@ def interp_helper(
     is_orthogonal = not (
         np.broadcast_shapes(*(_.shape for _ in new_x)) == new_x[0].shape
     )
+    broadcasted_shape = np.broadcast_shapes(*(_.shape for _ in new_x))
     ndim = len(x)
     out_shape = data.shape[:-ndim] + broadcasted_shape
     token = "interp-" + tokenize(data, *x, *new_x)
