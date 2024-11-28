@@ -187,7 +187,6 @@ def interp_helper(
                 ),
                 # output coordinates that can be constructed from this input block
                 *(
-                    # TODO: do we need to use the argsorter?
                     _take(out_coord, mask=out_chunk == current_chunk, axis=ax)
                     for (ax, out_chunk, out_coord, current_chunk) in zip(
                         range(ndim),

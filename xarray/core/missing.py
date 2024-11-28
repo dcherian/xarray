@@ -26,7 +26,6 @@ from xarray.core.types import Interp1dOptions, InterpnOptions, InterpOptions
 from xarray.core.utils import OrderedSet, is_scalar
 from xarray.core.variable import (
     Variable,
-    broadcast_variables,
     _broadcast_compat_variables,
 )
 from xarray.namedarray.parallelcompat import get_chunked_array_type
@@ -941,6 +940,7 @@ def interp_func(
             data = chunkmanager.rechunk(data, dict.fromkeys(range(-len(x), 0), -1))
 
         depth = INTERP_OVERLAP_DEPTHS.get(method)
+
         from xarray.core.dask_array_compat import interp_helper
 
         result = interp_helper(
