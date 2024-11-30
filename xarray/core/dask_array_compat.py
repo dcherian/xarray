@@ -135,10 +135,10 @@ def interp_helper(
     flat_new_x = [_.ravel() if np.ndim(_) != 0 else _ for _ in new_x]
 
     # TODO: what if len(x) is 1?
-    is_orthogonal = not (
-        np.broadcast_shapes(*(_.shape for _ in new_x)) == new_x[0].shape
-    )
     broadcasted_shape = np.broadcast_shapes(*(_.shape for _ in new_x))
+    non_scalar_shapes = tuple(_.shape for _ in new_x if np.ndim(_) > 0)
+    first_non_scalar_shape = non_scalar_shapes[0] if non_scalar_shapes else ()
+    is_orthogonal = broadcasted_shape != first_non_scalar_shape
     ndim = len(x)
     out_shape = data.shape[:-ndim] + broadcasted_shape
     token = "interp-" + tokenize(data, *x, *new_x)
