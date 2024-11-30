@@ -893,8 +893,13 @@ def interp_func(
     # that determination can become quite expensive if we broadcast to the full shape.
     # We compensate for this in `_interpnd` where we redo the broadcasting to full size
     # as is required by the scipy interpolators.
-    broadcast_new_x = _broadcast_compat_variables(*new_x)
-    new_dims = var.dims[: -len(x)] + tuple(broadcast_new_x[0].dims)
+    broadcast_new_x = _broadcast_compat_variables(*new_x, skip_scalars=True)
+    added_dims = ()
+    for _ in broadcast_new_x:
+        if np.ndim(_.data) != 0:
+            added_dims = _.dims
+            break
+    new_dims = var.dims[: -len(x)] + tuple(added_dims)
 
     if is_chunked_array(data):
         chunkmanager = get_chunked_array_type(data)

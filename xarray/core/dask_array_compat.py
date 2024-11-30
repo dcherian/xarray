@@ -106,7 +106,7 @@ def interp_helper(
     # to potential nD coordinates new_X
     assert all(coord.ndim == 1 for coord in x)
     # desired coordinate locations must be of same dimensionality
-    assert all(np.ndim(_) == np.ndim(new_x[0]) for _ in new_x[1:])
+    # assert all(np.ndim(_) == np.ndim(new_x[0]) for _ in new_x[1:])
     # check that data are aligned.
     assert all(
         size == coord.size for size, coord in zip(data.shape[-len(x) :], x, strict=True)
@@ -165,7 +165,16 @@ def interp_helper(
         # We are sending the desired output coordinate locations to the appropriate
         # block of the input. After interpolation we must argsort back to the correct order
         # This `argsorter` is only needed for calculating the "inverse" argsort indices: `invert_argsorter`
-        argsorter = tuple(np.argsort(_.squeeze()) for _ in flat_new_x)
+        argsorter = tuple(np.argsort(_.squeeze()) for _ in flat_new_x if np.ndim(_) > 0)
+
+        axis = []
+        i = 0
+        for _ in new_x:
+            if np.ndim(_) == 0:
+                axis.append(None)
+            else:
+                axis.append(i)
+                i += 1
 
         layer = {}
         for loop_dim_chunk_coord, (
@@ -190,7 +199,7 @@ def interp_helper(
                 *(
                     _take(out_coord, mask=out_chunk == current_chunk, axis=ax)
                     for (ax, out_chunk, out_coord, current_chunk) in zip(
-                        range(ndim),
+                        axis,
                         digitized,
                         new_x,  # no need for raveled here
                         input_core_dim_chunk_coord,
@@ -201,9 +210,8 @@ def interp_helper(
 
         desired_chunks = tuple(
             tuple(v for v in tlz.frequencies(digitized_.ravel()).values())
-            if np.ndim(new) != 0
-            else 0
             for ax, (digitized_, new) in enumerate(zip(digitized, new_x, strict=True))
+            if np.ndim(new) != 0
         )
 
     else:

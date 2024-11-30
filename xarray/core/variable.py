@@ -43,6 +43,7 @@ from xarray.core.utils import (
     is_dict_like,
     is_duck_array,
     is_duck_dask_array,
+    is_scalar,
     maybe_coerce_to_str,
 )
 from xarray.namedarray.core import NamedArray, _raise_if_any_duplicate_dimensions
@@ -2953,14 +2954,23 @@ def _unified_dims(variables):
     return all_dims
 
 
-def _broadcast_compat_variables(*variables):
+def _broadcast_compat_variables(
+    *variables: Variable, skip_scalars: bool = False
+) -> tuple[Variable]:
     """Create broadcast compatible variables, with the same dimensions.
 
     Unlike the result of broadcast_variables(), some variables may have
     dimensions of size 1 instead of the size of the broadcast dimension.
+
+    Scalar variables may be skipped with `skip_scalars=False`.
     """
     dims = tuple(_unified_dims(variables))
-    return tuple(var.set_dims(dims) if var.dims != dims else var for var in variables)
+    return tuple(
+        var
+        if ((skip_scalars and is_scalar(var._data)) or var.dims == dims)
+        else var.set_dims(dims)
+        for var in variables
+    )
 
 
 def broadcast_variables(*variables: Variable) -> tuple[Variable, ...]:
