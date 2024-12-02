@@ -734,9 +734,6 @@ def interp_func(
         ndim = var.ndim
         nconst = ndim - len(x)
 
-        # if useful, reuse localize for each chunk of new_x
-        localize = method in ["linear", "nearest"]
-
         # scipy.interpolate.interp1d always forces to float.
         # Use the same check for blockwise as well:
         if not issubclass(var.dtype.type, np.inexact):
@@ -744,7 +741,6 @@ def interp_func(
         else:
             dtype = var.dtype
 
-        # TODO: assert min chunksize is depth
         INTERP_OVERLAP_DEPTHS = {
             # overlap depths for interpolation methods that are "local"
             # one issue is the endpoint behaviour
@@ -770,7 +766,8 @@ def interp_func(
             _chunked_aware_interpnd,
             interp_func=func,
             interp_kwargs=kwargs,
-            localize=localize,
+            # if useful, reuse localize for each chunk of new_x
+            localize=method in ["linear", "nearest"],
         )
 
         # Every other method has to be applied blockwise
@@ -838,7 +835,7 @@ def _interpnd(
 
     # `new_x` contains broadcast-compatible Variables with size-1 dimensions
     # in the case of outer interpolation across multiple dimensions. So use
-    # `broadcast_arrays` to do the broadcasting. We do not have a method that handles
+    # `broadcast_arrays` to do the broadcasting. Xarray does not have a method that handles
     # broadcasting along existing size-1 dimensions.
     new_x = np.broadcast_arrays(*new_x)
 
