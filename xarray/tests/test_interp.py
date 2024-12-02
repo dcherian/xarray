@@ -1085,3 +1085,6 @@ def test_interp1d_complex_out_of_bounds() -> None:
     expected = da.interp(time=3.5, kwargs=dict(fill_value=np.nan + np.nan * 1j))
     actual = da.interp(time=3.5)
     assert_identical(actual, expected)
+
+
+# TODO: add out of order coordinates
