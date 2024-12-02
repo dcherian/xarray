@@ -1,6 +1,6 @@
 import itertools
 import math
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from functools import partial
 from typing import Any
 
@@ -48,7 +48,6 @@ def interp_helper(
     axis: tuple[int, ...],
     depth: int,
     out_chunks=None,
-    blockwise_kwargs: Mapping[Any, Any],
     dtype=None,
     meta=None,
 ):
@@ -75,8 +74,6 @@ def interp_helper(
     depth: int TODO: make dict[int, int]
         The number of elements that each block should share with its neighbors
         If a tuple or dict then this can be different per axis.
-    blockwise_kwargs:
-        Arbitrary kwargs unpacked and passed to func
 
     Returns
     ------
@@ -142,7 +139,6 @@ def interp_helper(
     ndim = len(x)
     out_shape = data.shape[:-ndim] + broadcasted_shape
     token = "interp-" + tokenize(data, *x, *new_x)
-    blockwise_func = partial(func, **blockwise_kwargs)
 
     # now find all the blocks needed to construct the output
     if is_orthogonal:
@@ -185,7 +181,7 @@ def interp_helper(
                 flat_out_chunk_coord, out_shape[-ndim:]
             )
             layer[token, *loop_dim_chunk_coord, *out_core_dim_chunk_coord] = (
-                blockwise_func,
+                func,
                 # block to interpolate
                 (overlapped.name, *loop_dim_chunk_coord, *input_core_dim_chunk_coord),
                 # corresponding input coordinate block
@@ -256,7 +252,7 @@ def interp_helper(
             indices = blocks_to_idx[input_core_dim_chunk_coord]
             output_block = (token, *loop_dim_chunk_coord, out_core_dim_chunk_coord)
             layer[output_block] = (
-                blockwise_func,
+                func,
                 # block to interpolate
                 input_block,
                 # corresponding input coordinate block

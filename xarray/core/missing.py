@@ -742,8 +742,6 @@ def interp_func(
         else:
             dtype = var.dtype
 
-        blockwise_kwargs = dict(interp_kwargs=kwargs, localize=localize)
-
         # TODO: assert min chunksize is depth
         INTERP_OVERLAP_DEPTHS = {
             # overlap depths for interpolation methods that are "local"
@@ -766,26 +764,40 @@ def interp_func(
         # core dimensions
         axis = range(nconst, ndim)
 
+        blockwise_func = partial(
+            _chunked_aware_interpnd,
+            interp_func=func,
+            interp_kwargs=kwargs,
+            localize=localize,
+        )
+
         # Every other method has to be applied blockwise
         if method not in INTERP_OVERLAP_DEPTHS or any(
-            is_chunked_array(var._data) for var in new_x
+            is_chunked_array(v._data) for v in new_x
         ):
             data = chunkmanager.rechunk(data, dict.fromkeys(range(-len(x), 0), -1))
 
-        from xarray.core.dask_array_compat import interp_helper
+            result = blockwise_interp_helper(
+                blockwise_func,
+                var._data,
+                x=x,
+                new_x=broadcast_new_x,
+                method=method,
+            )
+        else:
+            from xarray.core.dask_array_compat import interp_helper
 
-        result = interp_helper(
-            partial(_chunked_aware_interpnd, interp_func=func),
-            data,
-            x=tuple(_.data for _ in x),
-            new_x=tuple(_.data for _ in broadcast_new_x),
-            axis=axis,
-            depth=INTERP_OVERLAP_DEPTHS.get(method),
-            out_chunks=None,  # TODO: wire this up
-            blockwise_kwargs=blockwise_kwargs,
-            dtype=dtype,
-            meta=data._meta,
-        )
+            result = interp_helper(
+                blockwise_func,
+                data,
+                x=tuple(_.data for _ in x),
+                new_x=tuple(_.data for _ in broadcast_new_x),
+                axis=axis,
+                depth=INTERP_OVERLAP_DEPTHS.get(method),
+                out_chunks=None,  # TODO: wire this up
+                dtype=dtype,
+                meta=data._meta,
+            )
     else:
         result = _interpnd(data, x, broadcast_new_x, func, kwargs)
 
@@ -900,3 +912,60 @@ def decompose_interp(indexes_coords):
             partial_indexes_coords = {}
 
     yield partial_indexes_coords
+
+
+def blockwise_interp_helper(func, var, *, x, new_x, method):
+    import dask.array
+
+    chunkmanager = get_chunked_array_type(var)
+
+    ndim = var.ndim
+    nconst = ndim - len(x)
+
+    broadcasted_shape = np.broadcast_shapes(*(_.shape for _ in new_x))
+    new_x = dask.array.broadcast_arrays(*new_x)
+    new_x_ndim = len(broadcasted_shape)
+    out_ind = list(range(nconst)) + list(range(ndim, ndim + new_x_ndim))
+
+    # blockwise args format
+    x_arginds = [[_x, (nconst + index,)] for index, _x in enumerate(x)]
+    x_arginds = [item for pair in x_arginds for item in pair]
+    new_x_arginds = [
+        [_x, [ndim + index for index in range(new_x_ndim)]] for _x in new_x
+    ]
+    new_x_arginds = [item for pair in new_x_arginds for item in pair]
+
+    args = (var, range(ndim), *x_arginds, *new_x_arginds)
+
+    _, rechunked = chunkmanager.unify_chunks(*args)
+
+    args = tuple(
+        elem for pair in zip(rechunked, args[1::2], strict=True) for elem in pair
+    )
+
+    new_x = rechunked[1 + (len(rechunked) - 1) // 2 :]
+
+    # if useful, reuse localize for each chunk of new_x
+    localize = (method in ["linear", "nearest"]) and new_x0_chunks_is_not_none
+    new_axes = {ndim + i: newchunks[ndim + i] for i in range(new_x_ndim)}
+
+    # scipy.interpolate.interp1d always forces to float.
+    # Use the same check for blockwise as well:
+    if not issubclass(var.dtype.type, np.inexact):
+        dtype = float
+    else:
+        dtype = var.dtype
+
+    meta = var._meta
+
+    return chunkmanager.blockwise(
+        func,
+        out_ind,
+        *args,
+        localize=localize,
+        concatenate=True,
+        dtype=dtype,
+        new_axes=new_axes,
+        meta=meta,
+        align_arrays=False,
+    )
