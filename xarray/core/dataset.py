@@ -2921,17 +2921,14 @@ class Dataset(
         """Variant of _validate_indexers to be used for interpolation"""
         for k, v in self._validate_indexers(indexers):
             if isinstance(v, Variable):
-                if v.ndim == 1:
-                    yield k, v.to_index_variable()
-                else:
-                    yield k, v
+                yield k, v
             elif isinstance(v, int):
                 yield k, Variable((), v, attrs=self.coords[k].attrs)
-            elif isinstance(v, np.ndarray):
+            elif is_duck_array(v):
                 if v.ndim == 0:
                     yield k, Variable((), v, attrs=self.coords[k].attrs)
                 elif v.ndim == 1:
-                    yield k, IndexVariable((k,), v, attrs=self.coords[k].attrs)
+                    yield k, Variable((k,), v, attrs=self.coords[k].attrs)
                 else:
                     raise AssertionError()  # Already tested by _validate_indexers
             else:
