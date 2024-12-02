@@ -763,11 +763,7 @@ def interp_func(
         axis = range(nconst, ndim)
 
         blockwise_func = partial(
-            _chunked_aware_interpnd,
-            interp_func=func,
-            interp_kwargs=kwargs,
-            # if useful, reuse localize for each chunk of new_x
-            localize=method in ["linear", "nearest"],
+            _chunked_aware_interpnd, interp_func=func, interp_kwargs=kwargs
         )
 
         # Every other method has to be applied blockwise
@@ -847,7 +843,7 @@ def _interpnd(
     return reshape(rslt, rslt.shape[:-1] + new_x[0].shape)
 
 
-def _chunked_aware_interpnd(var, *coords, interp_func, interp_kwargs, localize=True):
+def _chunked_aware_interpnd(var, *coords, interp_func, interp_kwargs):
     """Wrapper for `_interpnd` through `blockwise` for chunked arrays.
 
     The first half arrays in `coords` are original coordinates,
@@ -863,7 +859,7 @@ def _chunked_aware_interpnd(var, *coords, interp_func, interp_kwargs, localize=T
         for _x in coords[n_x:]
     ]
 
-    if localize:
+    if interp_kwargs.get("method") in ["linear", "nearest"]:
         # _localize expect var to be a Variable
         var = Variable([f"dim_{dim}" for dim in range(len(var.shape))], var)
 
@@ -936,7 +932,7 @@ def blockwise_interp_helper(func, var, *, x, new_x, method):
 
     args = (var, range(ndim), *x_arginds, *new_x_arginds)
 
-    _, rechunked = chunkmanager.unify_chunks(*args)
+    newchunks, rechunked = chunkmanager.unify_chunks(*args)
 
     args = tuple(
         elem for pair in zip(rechunked, args[1::2], strict=True) for elem in pair
@@ -944,8 +940,6 @@ def blockwise_interp_helper(func, var, *, x, new_x, method):
 
     new_x = rechunked[1 + (len(rechunked) - 1) // 2 :]
 
-    # if useful, reuse localize for each chunk of new_x
-    localize = (method in ["linear", "nearest"]) and new_x0_chunks_is_not_none
     new_axes = {ndim + i: newchunks[ndim + i] for i in range(new_x_ndim)}
 
     # scipy.interpolate.interp1d always forces to float.
@@ -961,7 +955,6 @@ def blockwise_interp_helper(func, var, *, x, new_x, method):
         func,
         out_ind,
         *args,
-        localize=localize,
         concatenate=True,
         dtype=dtype,
         new_axes=new_axes,
