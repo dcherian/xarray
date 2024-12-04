@@ -150,7 +150,11 @@ def interp_helper(
         # input chunk. This is a potential extension point for interping from
         # source nD coordinates
         digitized = tuple(
-            np.atleast_1d(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
+            np.atleast_1d(
+                np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]])
+                if len(chunks) > 1
+                else np.zeros_like(desired)
+            )
             for ax, desired, coord, chunks in zip(
                 axis, new_x, x, chunksizes, strict=True
             )
@@ -217,8 +221,13 @@ def interp_helper(
         # source nD coordinates
         # The broadcast handles input scalars.
         flat_new_x = np.broadcast_arrays(*flat_new_x)
+
         digitized = tuple(
-            np.atleast_1d(np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]]))
+            np.atleast_1d(
+                np.digitize(desired, coord[list(np.cumsum(chunks))[:-1]])
+                if len(chunks) > 1
+                else np.zeros_like(desired)
+            )
             for ax, desired, coord, chunks in zip(
                 axis, flat_new_x, x, chunksizes, strict=True
             )
