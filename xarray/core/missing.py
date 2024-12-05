@@ -22,7 +22,11 @@ from xarray.core.duck_array_ops import (
 from xarray.core.options import _get_keep_attrs
 from xarray.core.types import Interp1dOptions, InterpnOptions, InterpOptions
 from xarray.core.utils import OrderedSet, is_scalar
-from xarray.core.variable import Variable, broadcast_variables
+from xarray.core.variable import (
+    Variable,
+    _broadcast_compat_variables,
+    broadcast_variables,
+)
 from xarray.namedarray.parallelcompat import get_chunked_array_type
 from xarray.namedarray.pycompat import is_chunked_array
 
@@ -602,7 +606,7 @@ def _floatize_x(x, new_x):
     return x, new_x
 
 
-def interp(var, indexes_coords, method: InterpOptions, **kwargs):
+def interp(var: Variable, indexes_coords, method: InterpOptions, **kwargs) -> Variable:
     """Make an interpolation of Variable
 
     Parameters
@@ -650,12 +654,9 @@ def interp(var, indexes_coords, method: InterpOptions, **kwargs):
         # transpose to make the interpolated axis to the last position
         broadcast_dims = [d for d in var.dims if d not in dims]
         original_dims = broadcast_dims + dims
-        new_dims = broadcast_dims + list(destination[0].dims)
-        interped = interp_func(
-            var.transpose(*original_dims).data, x, destination, method, kwargs
+        result = interp_func(
+            var.transpose(*original_dims), x, destination, method=method, kwargs=kwargs
         )
-
-        result = Variable(new_dims, interped, attrs=var.attrs, fastpath=True)
 
         # dimension of the output array
         out_dims: OrderedSet = OrderedSet()
@@ -669,7 +670,14 @@ def interp(var, indexes_coords, method: InterpOptions, **kwargs):
     return result
 
 
-def interp_func(var, x, new_x, method: InterpOptions, kwargs):
+def interp_func(
+    var: Variable,
+    x: tuple[Variable, ...],
+    new_x: tuple[Variable, ...],
+    *,
+    method: InterpOptions,
+    kwargs,
+) -> Variable:
     """
     multi-dimensional interpolation for array-like. Interpolated axes should be
     located in the last position.
@@ -705,75 +713,38 @@ def interp_func(var, x, new_x, method: InterpOptions, kwargs):
     if not x:
         return var.copy()
 
+    data = var._data
     if len(x) == 1:
         func, kwargs = _get_interpolator(method, vectorizeable_only=True, **kwargs)
     else:
         func, kwargs = _get_interpolator_nd(method, **kwargs)
 
-    if is_chunked_array(var):
-        chunkmanager = get_chunked_array_type(var)
+    # This adds any necessary broadcast dimensions with size-1.
+    # This is useful for the dask code-path where we have to determine
+    # which blocks are necessary. With outer or orthogonal interpolation
+    # that determination can become quite expensive if we broadcast to the full shape.
+    # We compensate for this in `_interpnd` where we redo the broadcasting to full size
+    # as is required by the scipy interpolators.
+    broadcast_new_x = _broadcast_compat_variables(*new_x)
+    new_dims = var.dims[: -len(x)] + broadcast_new_x[0].dims
 
-        ndim = var.ndim
-        nconst = ndim - len(x)
-
-        out_ind = list(range(nconst)) + list(range(ndim, ndim + new_x[0].ndim))
-
-        # blockwise args format
-        x_arginds = [[_x, (nconst + index,)] for index, _x in enumerate(x)]
-        x_arginds = [item for pair in x_arginds for item in pair]
-        new_x_arginds = [
-            [_x, [ndim + index for index in range(_x.ndim)]] for _x in new_x
-        ]
-        new_x_arginds = [item for pair in new_x_arginds for item in pair]
-
-        args = (var, range(ndim), *x_arginds, *new_x_arginds)
-
-        _, rechunked = chunkmanager.unify_chunks(*args)
-
-        args = tuple(
-            elem for pair in zip(rechunked, args[1::2], strict=True) for elem in pair
+    if is_chunked_array(data):
+        blockwise_func = partial(
+            _chunked_aware_interpnd, interp_func=func, interp_kwargs=kwargs
         )
 
-        new_x = rechunked[1 + (len(rechunked) - 1) // 2 :]
-
-        new_x0_chunks = new_x[0].chunks
-        new_x0_shape = new_x[0].shape
-        new_x0_chunks_is_not_none = new_x0_chunks is not None
-        new_axes = {
-            ndim + i: new_x0_chunks[i] if new_x0_chunks_is_not_none else new_x0_shape[i]
-            for i in range(new_x[0].ndim)
-        }
-
-        # if useful, reuse localize for each chunk of new_x
-        localize = (method in ["linear", "nearest"]) and new_x0_chunks_is_not_none
-
-        # scipy.interpolate.interp1d always forces to float.
-        # Use the same check for blockwise as well:
-        if not issubclass(var.dtype.type, np.inexact):
-            dtype = float
-        else:
-            dtype = var.dtype
-
-        meta = var._meta
-
-        return chunkmanager.blockwise(
-            _chunked_aware_interpnd,
-            out_ind,
-            *args,
-            interp_func=func,
-            interp_kwargs=kwargs,
-            localize=localize,
-            concatenate=True,
-            dtype=dtype,
-            new_axes=new_axes,
-            meta=meta,
-            align_arrays=False,
+        result = blockwise_interp_helper(
+            blockwise_func, data, x=x, new_x=broadcast_new_x
         )
 
-    return _interpnd(var, x, new_x, func, kwargs)
+    else:
+        result = _interpnd(data, x, new_x, func, kwargs)
+    return Variable(new_dims, result, attrs=var.attrs, fastpath=True)
 
 
-def _interp1d(var, x, new_x, func, kwargs):
+def _interp1d(
+    var: np.ndarray, x: tuple[Variable], new_x: tuple[Variable], func, kwargs
+) -> np.ndarray:
     # x, new_x are tuples of size 1.
     x, new_x = x[0], new_x[0]
     rslt = func(x, var, **kwargs)(np.ravel(new_x))
@@ -784,7 +755,13 @@ def _interp1d(var, x, new_x, func, kwargs):
     return rslt
 
 
-def _interpnd(var, x, new_x, func, kwargs):
+def _interpnd(
+    var: np.ndarray,
+    x: tuple[Variable, ...],
+    new_x: tuple[Variable, ...],
+    func: Callable[[np.ndarray], ...],
+    kwargs,
+) -> np.ndarray:
     x, new_x = _floatize_x(x, new_x)
 
     if len(x) == 1:
@@ -792,15 +769,22 @@ def _interpnd(var, x, new_x, func, kwargs):
 
     # move the interpolation axes to the start position
     var = var.transpose(range(-len(x), var.ndim - len(x)))
+
+    # `new_x` contains broadcast-compatible Variables with size-1 dimensions
+    # in the case of outer interpolation across multiple dimensions. So use
+    # `broadcast_arrays` to do the broadcasting. Xarray does not have a method that handles
+    # broadcasting along existing size-1 dimensions.
+    new_x = np.broadcast_arrays(*new_x)
+
     # stack new_x to 1 vector, with reshape
-    xi = np.stack([x1.values.ravel() for x1 in new_x], axis=-1)
+    xi = np.stack([x1.ravel() for x1 in new_x], axis=-1)
     rslt = func(x, var, xi, **kwargs)
     # move back the interpolation axes to the last position
     rslt = rslt.transpose(range(-rslt.ndim + 1, 1))
     return reshape(rslt, rslt.shape[:-1] + new_x[0].shape)
 
 
-def _chunked_aware_interpnd(var, *coords, interp_func, interp_kwargs, localize=True):
+def _chunked_aware_interpnd(var: np.ndarray, *coords, interp_func, interp_kwargs):
     """Wrapper for `_interpnd` through `blockwise` for chunked arrays.
 
     The first half arrays in `coords` are original coordinates,
@@ -816,7 +800,7 @@ def _chunked_aware_interpnd(var, *coords, interp_func, interp_kwargs, localize=T
         for _x in coords[n_x:]
     ]
 
-    if localize:
+    if interp_kwargs.get("method") in ["linear", "nearest"]:
         # _localize expect var to be a Variable
         var = Variable([f"dim_{dim}" for dim in range(len(var.shape))], var)
 
@@ -864,3 +848,56 @@ def decompose_interp(indexes_coords):
             partial_indexes_coords = {}
 
     yield partial_indexes_coords
+
+
+def blockwise_interp_helper(
+    func, var, *, x: tuple[Variable, ...], new_x: tuple[Variable, ...]
+):
+    chunkmanager = get_chunked_array_type(var)
+
+    ndim = var.ndim
+    nconst = ndim - len(x)
+
+    broadcasted_shape = np.broadcast_shapes(*(_.shape for _ in new_x))
+    new_x_ndim = len(broadcasted_shape)
+    out_ind = list(range(nconst)) + list(range(ndim, ndim + new_x_ndim))
+
+    # blockwise args format
+    x_arginds = [[_x, (nconst + index,)] for index, _x in enumerate(x)]
+    x_arginds = [item for pair in x_arginds for item in pair]
+    new_x_arginds = [
+        [_x, [ndim + index for index in range(new_x_ndim)]] for _x in new_x
+    ]
+    new_x_arginds = [item for pair in new_x_arginds for item in pair]
+
+    args = (var, range(ndim), *x_arginds, *new_x_arginds)
+
+    newchunks, rechunked = chunkmanager.unify_chunks(*args)
+
+    args = tuple(
+        elem for pair in zip(rechunked, args[1::2], strict=True) for elem in pair
+    )
+
+    new_x = rechunked[1 + (len(rechunked) - 1) // 2 :]
+
+    new_axes = {ndim + i: newchunks[ndim + i] for i in range(new_x_ndim)}
+
+    # scipy.interpolate.interp1d always forces to float.
+    # Use the same check for blockwise as well:
+    if not issubclass(var.dtype.type, np.inexact):
+        dtype = float
+    else:
+        dtype = var.dtype
+
+    meta = var._meta
+
+    return chunkmanager.blockwise(
+        func,
+        out_ind,
+        *args,
+        concatenate=True,
+        dtype=dtype,
+        new_axes=new_axes,
+        meta=meta,
+        align_arrays=False,
+    )
