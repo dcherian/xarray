@@ -729,8 +729,6 @@ def interp_func(
     new_dims = var.dims[: -len(x)] + tuple(added_dims)
 
     if is_chunked_array(data):
-        chunkmanager = get_chunked_array_type(data)
-
         ndim = var.ndim
         nconst = ndim - len(x)
 
@@ -770,8 +768,6 @@ def interp_func(
         if method not in INTERP_OVERLAP_DEPTHS or any(
             is_chunked_array(v._data) for v in new_x
         ):
-            data = chunkmanager.rechunk(data, dict.fromkeys(range(-len(x), 0), -1))
-
             result = blockwise_interp_helper(
                 blockwise_func,
                 var._data,
@@ -910,15 +906,12 @@ def decompose_interp(indexes_coords):
 
 
 def blockwise_interp_helper(func, var, *, x, new_x, method):
-    import dask.array
-
     chunkmanager = get_chunked_array_type(var)
 
     ndim = var.ndim
     nconst = ndim - len(x)
 
     broadcasted_shape = np.broadcast_shapes(*(_.shape for _ in new_x))
-    new_x = dask.array.broadcast_arrays(*new_x)
     new_x_ndim = len(broadcasted_shape)
     out_ind = list(range(nconst)) + list(range(ndim, ndim + new_x_ndim))
 
