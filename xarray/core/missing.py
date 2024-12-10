@@ -649,13 +649,12 @@ def interp(var: Variable, indexes_coords, method: InterpOptions, **kwargs) -> Va
         # target dimensions
         dims = list(indep_indexes_coords)
         x, new_x = zip(*[indep_indexes_coords[d] for d in dims], strict=True)
-        destination = broadcast_variables(*new_x)
 
         # transpose to make the interpolated axis to the last position
         broadcast_dims = [d for d in var.dims if d not in dims]
         original_dims = broadcast_dims + dims
         result = interp_func(
-            var.transpose(*original_dims), x, destination, method=method, kwargs=kwargs
+            var.transpose(*original_dims), x, new_x, method=method, kwargs=kwargs
         )
 
         # dimension of the output array
@@ -732,13 +731,12 @@ def interp_func(
         blockwise_func = partial(
             _chunked_aware_interpnd, interp_func=func, interp_kwargs=kwargs
         )
-
         result = blockwise_interp_helper(
-            blockwise_func, data, x=x, new_x=broadcast_new_x
+            blockwise_func, var, x=x, new_x=broadcast_new_x
         )
 
     else:
-        result = _interpnd(data, x, new_x, func, kwargs)
+        result = _interpnd(data, x, broadcast_new_x, func, kwargs)
     return Variable(new_dims, result, attrs=var.attrs, fastpath=True)
 
 
