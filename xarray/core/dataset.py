@@ -4176,11 +4176,11 @@ class Dataset(
         # optimization: create dask coordinate arrays once per Dataset
         # rather than once per Variable when dask.array.unify_chunks is called later
         # GH4739
-        if obj.__dask_graph__():
-            dask_indexers = {
-                k: (index.to_base_variable().chunk(), dest.to_base_variable().chunk())
-                for k, (index, dest) in validated_indexers.items()
-            }
+        # if obj.__dask_graph__():
+        #     dask_indexers = {
+        #         k: (index.to_base_variable().chunk(), dest.to_base_variable().chunk())
+        #         for k, (index, dest) in validated_indexers.items()
+        #     }
 
         variables: dict[Hashable, Variable] = {}
         reindex: bool = False
@@ -4188,10 +4188,10 @@ class Dataset(
             if name in indexers:
                 continue
 
-            if is_duck_dask_array(var.data):
-                use_indexers = dask_indexers
-            else:
-                use_indexers = validated_indexers
+            # if is_duck_dask_array(var.data):
+            # use_indexers = dask_indexers
+            # else:
+            use_indexers = validated_indexers
 
             dtype_kind = var.dtype.kind
             if dtype_kind in "uifc":

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import random
+import string
 import warnings
 from collections.abc import Callable, Hashable, Sequence
 from functools import partial
+from itertools import chain
 from numbers import Number
 from typing import TYPE_CHECKING, Any, get_args
 
@@ -29,6 +32,7 @@ from xarray.core.variable import (
 )
 from xarray.namedarray.parallelcompat import get_chunked_array_type
 from xarray.namedarray.pycompat import is_chunked_array
+from xarray.namedarray.utils import is_duck_dask_array
 
 if TYPE_CHECKING:
     from xarray.core.dataarray import DataArray
@@ -731,9 +735,7 @@ def interp_func(
         blockwise_func = partial(
             _chunked_aware_interpnd, interp_func=func, interp_kwargs=kwargs
         )
-        result = blockwise_interp_helper(
-            blockwise_func, var, x=x, new_x=broadcast_new_x
-        )
+        result = blockwise_interp_helper(blockwise_func, var, x=x, new_x=new_x)
 
     else:
         result = _interpnd(data, x, broadcast_new_x, func, kwargs)
@@ -851,51 +853,51 @@ def decompose_interp(indexes_coords):
 def blockwise_interp_helper(
     func, var, *, x: tuple[Variable, ...], new_x: tuple[Variable, ...]
 ):
-    chunkmanager = get_chunked_array_type(var)
+    chunkmanager = get_chunked_array_type(var._data)
 
     ndim = var.ndim
     nconst = ndim - len(x)
 
-    broadcasted_shape = np.broadcast_shapes(*(_.shape for _ in new_x))
-    new_x_ndim = len(broadcasted_shape)
-    out_ind = list(range(nconst)) + list(range(ndim, ndim + new_x_ndim))
+    broadcast_new_x = broadcast_variables(*new_x)
+    broadcasted_sizes = broadcast_new_x[0].sizes
 
-    # blockwise args format
-    x_arginds = [[_x, (nconst + index,)] for index, _x in enumerate(x)]
-    x_arginds = [item for pair in x_arginds for item in pair]
-    new_x_arginds = [
-        [_x, [ndim + index for index in range(new_x_ndim)]] for _x in new_x
-    ]
-    new_x_arginds = [item for pair in new_x_arginds for item in pair]
+    in_dims = tuple(chain(*(_.dims for _ in x)))
 
-    args = (var, range(ndim), *x_arginds, *new_x_arginds)
+    old = dict(zip(in_dims, x, strict=True))
+    new = dict(zip(in_dims, new_x, strict=True))
 
-    newchunks, rechunked = chunkmanager.unify_chunks(*args)
+    new_x_dim_renamer = {}
+    for indim in in_dims:
+        if not is_duck_dask_array(new[indim]) and not old[indim].identical(new[indim]):
+            new_x_dim_renamer[indim] = generate_random_string()
 
-    args = tuple(
-        elem for pair in zip(rechunked, args[1::2], strict=True) for elem in pair
-    )
+    out_dims = tuple(new_x_dim_renamer.get(k, k) for k in broadcasted_sizes)
 
-    new_x = rechunked[1 + (len(rechunked) - 1) // 2 :]
-
-    new_axes = {ndim + i: newchunks[ndim + i] for i in range(new_x_ndim)}
+    data_arginds = (var._data, var.dims)
+    x_arginds = tuple(chain(*((coord, coord.dims) for coord in x)))
+    new_x_renamed = tuple(new_x_dim_renamer.get(k, k) for k in broadcasted_sizes)
+    new_x_arginds = tuple(chain(*((coord, new_x_renamed) for coord in broadcast_new_x)))
 
     # scipy.interpolate.interp1d always forces to float.
     # Use the same check for blockwise as well:
-    if not issubclass(var.dtype.type, np.inexact):
-        dtype = float
-    else:
-        dtype = var.dtype
-
-    meta = var._meta
+    dtype = float if not issubclass(var.dtype.type, np.inexact) else var.dtype
 
     return chunkmanager.blockwise(
         func,
-        out_ind,
-        *args,
-        concatenate=True,
+        tuple(var.dims[:nconst]) + out_dims,
+        *data_arginds,
+        *x_arginds,
+        *new_x_arginds,
         dtype=dtype,
-        new_axes=new_axes,
-        meta=meta,
-        align_arrays=False,
+        concatenate=True,  # TODO: explicit rechunk
+        new_axes={
+            v: broadcasted_sizes.get(k, var.sizes.get(k))
+            for k, v in new_x_dim_renamer.items()
+        },
     )
+
+
+def generate_random_string(length=6):
+    characters = string.ascii_letters + string.digits  # Includes a-z, A-Z, and 0-9
+    random_string = "".join(random.choices(characters, k=length))
+    return random_string
