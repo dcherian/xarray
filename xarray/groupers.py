@@ -47,6 +47,30 @@ __all__ = [
 RESAMPLE_DIM = "__resample_dim__"
 
 
+def replace_values(array, to_replace, value):
+    # Use np.unique to create an inverse index
+    flat = array.ravel()
+    uniques, index = np.unique(flat, return_inverse=True)
+    replaceable = np.isin(flat, to_replace)
+
+    # Create a replacement array in which there is a 1:1 relation between
+    # uniques and the replacement values, so that we can use the inverse index
+    # to select replacement values.
+    valid = np.isin(to_replace, uniques, assume_unique=True)
+    # Remove to_replace values that are not present in da. If no overlap
+    # exists between to_replace and the values in da, just return a copy.
+    if not valid.any():
+        return array.copy()
+    to_replace = to_replace[valid]
+    value = value[valid]
+
+    replacement = np.zeros_like(uniques)
+    replacement[np.searchsorted(uniques, to_replace)] = value
+    out = flat.copy()
+    out[replaceable] = replacement[index[replaceable]]
+    return out.reshape(array.shape)
+
+
 @dataclass(init=False)
 class EncodedGroups:
     """
@@ -354,16 +378,37 @@ class BinGrouper(Grouper):
             raise ValueError("All bin edges are NaN.")
 
     def _cut(self, data):
-        return pd.cut(
-            np.asarray(data).ravel(),
-            bins=self.bins,
-            right=self.right,
-            labels=self.labels,
-            precision=self.precision,
-            include_lowest=self.include_lowest,
-            duplicates=self.duplicates,
-            retbins=True,
-        )
+        array = np.asarray(data).ravel()
+        if isinstance(self.bins, pd.IntervalIndex):
+            import itertools
+
+            index = self.bins
+            left = index.left
+            right = index.right
+            if index.closed == "both":
+                right += 1
+
+            bins = np.unique(tuple(itertools.chain(*zip(left, right, strict=True))))
+            idxr = index.get_indexer(bins)
+            codes = replace_values(
+                np.digitize(array, bins, right=index.closed == "right") - 1,
+                np.arange(idxr.size + 1),
+                np.concatenate([idxr, [-1]]),
+            )
+            return pd.Categorical.from_codes(
+                codes, categories=self.bins, ordered=True
+            ), self.bins
+        else:
+            return pd.cut(
+                array,
+                bins=self.bins,
+                right=self.right,
+                labels=self.labels,
+                precision=self.precision,
+                include_lowest=self.include_lowest,
+                duplicates=self.duplicates,
+                retbins=True,
+            )
 
     def _pandas_cut_wrapper(self, data, **kwargs):
         binned, bins = self._cut(data)
